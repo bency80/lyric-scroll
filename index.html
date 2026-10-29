@@ -1,0 +1,1492 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Lyric Scroll</title>
+<meta name="description" content="Search lyrics in Mandarin, Cantonese, Japanese, Korean or Thai and read them with romanization under every word, on a scrolling teleprompter you control.">
+<meta name="theme-color" content="#f2f4f8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1220" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Lyric Scroll">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23c3372b'/%3E%3Ctext x='32' y='45' font-size='38' text-anchor='middle' fill='white' font-family='serif'%3E%E6%AD%8C%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="preconnect" href="https://lrclib.net" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Serif+HK:wght@500;700&family=Noto+Serif+JP:wght@500;700&family=Noto+Serif+KR:wght@500;700&family=Noto+Serif+SC:wght@500;700&family=Noto+Serif+Thai:wght@500;700&display=swap">
+<style>
+/* Layout: one-screen teleprompter. Slim header, a full-height lyric stage with a fixed reading line at 36% height, and the transport within thumb reach at the bottom. */
+:root {
+  --paper: #f2f4f8;
+  --surface: #ffffff;
+  --ink: #151a2d;
+  --muted: #5d647c;
+  --faint: #a7adbf;
+  --reading: #0b7a63;
+  --seal: #c3372b;
+  --seal-ink: #ffffff;
+  --gold: #c98a14;
+  --rule: #dde2ec;
+  --tint: rgba(195, 55, 43, .08);
+  --scrim: rgba(12, 14, 28, .45);
+  --shadow: 0 18px 50px rgba(21, 26, 45, .18);
+
+  --f-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --f-roman: "IBM Plex Sans Condensed", "IBM Plex Sans", "Arial Narrow", system-ui, sans-serif;
+  --f-zh: "Noto Serif SC", "Noto Serif HK", "Songti SC", "SimSun", serif;
+  --f-yue: "Noto Serif HK", "Noto Serif SC", "Songti TC", "PMingLiU", serif;
+  --f-ja: "Noto Serif JP", "Hiragino Mincho ProN", "Yu Mincho", serif;
+  --f-ko: "Noto Serif KR", "AppleMyungjo", "Batang", serif;
+  --f-th: "Noto Serif Thai", "Thonburi", "Tahoma", serif;
+
+  --fs: 30px;
+  --band-y: 200px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0f1220; --surface: #181c2e; --ink: #eef0f7; --muted: #9aa1b9; --faint: #4d5372;
+    --reading: #69d1b2; --seal: #e0574a; --gold: #e9b44c; --rule: #272c44;
+    --tint: rgba(224, 87, 74, .14); --scrim: rgba(0, 0, 0, .6); --shadow: 0 18px 50px rgba(0, 0, 0, .5);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0f1220; --surface: #181c2e; --ink: #eef0f7; --muted: #9aa1b9; --faint: #4d5372;
+  --reading: #69d1b2; --seal: #e0574a; --gold: #e9b44c; --rule: #272c44;
+  --tint: rgba(224, 87, 74, .14); --scrim: rgba(0, 0, 0, .6); --shadow: 0 18px 50px rgba(0, 0, 0, .5);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 15px/1.45 var(--f-ui);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  overflow: hidden;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--seal); outline-offset: 2px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+svg { display: block; }
+[hidden] { display: none !important; }
+
+.app {
+  height: 100vh;
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+}
+
+/* ---------- header ---------- */
+.top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: max(10px, env(safe-area-inset-top, 0px));
+  padding-bottom: 10px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+}
+.seal {
+  flex: none;
+  width: 38px; height: 38px;
+  display: grid; place-items: center;
+  border: 0; border-radius: 8px;
+  background: var(--seal); color: var(--seal-ink);
+  font: 700 22px/1 var(--f-zh);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .22);
+}
+.song {
+  flex: 1; min-width: 0;
+  display: grid; gap: 1px;
+  padding: 2px 4px;
+  border: 0; background: none; text-align: left;
+  border-radius: 6px;
+}
+.song-title {
+  font-weight: 600; font-size: 1rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.song-meta {
+  color: var(--muted); font-size: .8rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.lang-chip select {
+  appearance: none; -webkit-appearance: none;
+  height: 38px;
+  padding: 0 30px 0 12px;
+  border: 1px solid var(--rule); border-radius: 999px;
+  background: var(--paper) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 10px center / 14px;
+  font-weight: 500; font-size: .9rem;
+}
+.icon-btn {
+  flex: none;
+  width: 40px; height: 40px;
+  display: grid; place-items: center;
+  border: 1px solid transparent; border-radius: 999px;
+  background: none; color: var(--ink);
+}
+.icon-btn:hover { background: var(--paper); border-color: var(--rule); }
+.icon-btn svg { width: 22px; height: 22px; }
+.icon-btn.sm { width: 34px; height: 34px; }
+.icon-btn.sm svg { width: 18px; height: 18px; }
+
+/* ---------- stage ---------- */
+.stage-wrap { position: relative; min-height: 0; }
+.stage {
+  position: relative;
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  scrollbar-width: thin;
+  outline: none;
+}
+.stage-wrap::before, .stage-wrap::after {
+  content: ""; position: absolute; left: 0; right: 0; height: 56px;
+  pointer-events: none; z-index: 2;
+}
+.stage-wrap::before { top: 0; background: linear-gradient(var(--paper), transparent); }
+.stage-wrap::after { bottom: 0; background: linear-gradient(transparent, var(--paper)); }
+
+.band {
+  position: absolute; left: 0; right: 0;
+  top: var(--band-y);
+  height: 2px; margin-top: -1px;
+  pointer-events: none; z-index: 3;
+  background: linear-gradient(90deg, var(--gold) 0 22px, transparent 22px calc(100% - 22px), var(--gold) calc(100% - 22px));
+}
+
+.lyrics {
+  max-width: 980px;
+  margin: 0 auto;
+  font-size: var(--fs);
+  font-weight: 500;
+  line-height: 1.22;
+  font-family: var(--f-zh);
+}
+.lyrics[data-lang="yue"] { font-family: var(--f-yue); }
+.lyrics[data-lang="ja"] { font-family: var(--f-ja); }
+.lyrics[data-lang="ko"] { font-family: var(--f-ko); }
+.lyrics[data-lang="th"] { font-family: var(--f-th); line-height: 1.5; }
+
+.ln {
+  margin: 0;
+  padding-block: .38em;
+  display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-start;
+  column-gap: .06em; row-gap: .3em;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color .25s ease;
+}
+.ln.past { color: var(--faint); }
+.ln.now { color: var(--ink); }
+.ln.plain { display: block; text-align: center; }
+.ln.gap { height: .8em; padding: 0; cursor: default; }
+.ln.credit { font-size: .55em; font-family: var(--f-ui); padding-block: .5em; }
+.lyrics[data-lang="ko"] .ln, .lyrics[data-lang="th"] .ln { column-gap: .4em; }
+
+.c { display: inline-flex; flex-direction: column; align-items: center; min-width: .5em; }
+.c.p { min-width: 0; }
+.g { white-space: pre; }
+.r {
+  margin-top: .12em;
+  padding-inline: .2em;
+  font-family: var(--f-roman);
+  font-size: .44em;
+  font-weight: 500;
+  line-height: 1.15;
+  letter-spacing: .01em;
+  white-space: nowrap;
+  color: var(--reading);
+  opacity: .62;
+  transition: opacity .25s ease;
+}
+.lyrics[data-lang="ko"] .r, .lyrics[data-lang="th"] .r { font-size: .5em; }
+.ln.past .r { opacity: .35; }
+.ln.now .r { opacity: 1; }
+.sp { width: .45em; }
+.lyrics.no-roman .r { display: none; }
+
+.toast {
+  position: absolute; z-index: 4;
+  top: 14px; left: 50%; transform: translateX(-50%);
+  max-width: calc(100% - 32px);
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: var(--ink); color: var(--paper);
+  font-size: .85rem; font-weight: 500;
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+
+/* ---------- transport ---------- */
+.transport {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px 18px;
+  padding-top: 10px;
+  padding-bottom: max(10px, env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  background: var(--surface);
+  border-top: 1px solid var(--rule);
+}
+.progress { position: absolute; top: -1px; left: 0; height: 2px; width: 0; background: var(--seal); }
+.deck { display: flex; align-items: center; gap: 6px; }
+.play {
+  width: 56px; height: 56px;
+  display: grid; place-items: center;
+  border: 0; border-radius: 999px;
+  background: var(--seal); color: var(--seal-ink);
+  box-shadow: 0 6px 18px var(--tint);
+}
+.play svg { width: 26px; height: 26px; }
+.play:active { transform: scale(.96); }
+.speed { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.speed input[type="range"] { flex: 1; min-width: 60px; accent-color: var(--seal); height: 28px; }
+.speed-out {
+  flex: none; width: 84px;
+  display: grid; justify-items: end; line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+.speed-out b { font-size: 1.05rem; font-weight: 600; }
+.speed-out span { font-size: .75rem; color: var(--muted); }
+.fit {
+  height: 38px; padding: 0 14px;
+  border: 1px solid var(--rule); border-radius: 999px;
+  background: var(--paper);
+  font-size: .85rem; font-weight: 500; white-space: nowrap;
+}
+.fit span { color: var(--muted); font-variant-numeric: tabular-nums; }
+.fit:hover { border-color: var(--muted); }
+
+@media (max-width: 620px) {
+  .transport { grid-template-columns: 1fr auto; }
+  .speed { grid-column: 1 / -1; order: -1; }
+  .deck { gap: 14px; }
+}
+
+/* ---------- dialogs ---------- */
+dialog {
+  width: min(640px, calc(100vw - 32px));
+  max-width: none;
+  max-height: min(88dvh, 860px);
+  padding: 0;
+  border: 0; border-radius: 16px;
+  background: var(--surface); color: var(--ink);
+  box-shadow: var(--shadow);
+}
+dialog[open] { display: flex; flex-direction: column; }
+dialog::backdrop { background: var(--scrim); }
+@media (max-width: 620px) {
+  dialog { width: 100vw; height: 100dvh; max-height: none; margin: 0; border-radius: 0; }
+}
+.dlg-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding-top: max(14px, env(safe-area-inset-top, 0px));
+  padding-bottom: 10px;
+  padding-left: max(20px, env(safe-area-inset-left, 0px));
+  padding-right: max(12px, env(safe-area-inset-right, 0px));
+  border-bottom: 1px solid var(--rule);
+}
+.dlg-head h2 { margin: 0; font-size: 1.15rem; font-weight: 600; text-wrap: balance; }
+.dlg-body {
+  overflow-y: auto;
+  display: grid; gap: 18px; align-content: start;
+  padding-top: 16px;
+  padding-bottom: max(20px, env(safe-area-inset-bottom, 0px));
+  padding-left: max(20px, env(safe-area-inset-left, 0px));
+  padding-right: max(20px, env(safe-area-inset-right, 0px));
+}
+.label {
+  margin: 0 0 8px;
+  font-size: .72rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--muted);
+}
+fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.langs-opts { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+@media (max-width: 520px) { .langs-opts { grid-template-columns: repeat(3, 1fr); } }
+.langs-opts label { position: relative; }
+.langs-opts input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.langs-opts span {
+  display: grid; gap: 2px; justify-items: center;
+  padding: 9px 4px;
+  border: 1px solid var(--rule); border-radius: 10px;
+  background: var(--paper);
+  font-size: .78rem; color: var(--muted);
+}
+.langs-opts b { font: 700 1.05rem/1.2 var(--f-zh); color: var(--ink); }
+.langs-opts b[lang="ja"] { font-family: var(--f-ja); }
+.langs-opts b[lang="ko"] { font-family: var(--f-ko); }
+.langs-opts b[lang="th"] { font-family: var(--f-th); }
+.langs-opts b[lang="zh-HK"] { font-family: var(--f-yue); }
+.langs-opts input:checked + span { border-color: var(--seal); background: var(--tint); color: var(--ink); }
+.langs-opts input:focus-visible + span { outline: 2px solid var(--seal); outline-offset: 2px; }
+
+.search-row { display: flex; gap: 8px; }
+.search-row input {
+  flex: 1; min-width: 0; height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--rule); border-radius: 10px;
+  background: var(--paper);
+  font-size: 1rem;
+}
+.primary {
+  height: 44px; padding: 0 18px;
+  border: 0; border-radius: 10px;
+  background: var(--seal); color: var(--seal-ink);
+  font-weight: 600;
+}
+.primary:disabled { opacity: .6; cursor: progress; }
+.hint { margin: -6px 0 0; color: var(--muted); font-size: .85rem; }
+.hint.err { color: var(--seal); }
+
+.results { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.result {
+  width: 100%;
+  display: grid; gap: 3px;
+  padding: 11px 14px;
+  border: 1px solid var(--rule); border-radius: 12px;
+  background: var(--paper);
+  text-align: left;
+}
+.result:hover { border-color: var(--muted); }
+.result:disabled { opacity: .55; cursor: not-allowed; }
+.r-top { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.r-title { font-weight: 600; font-size: 1.02rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.r-tags { display: flex; gap: 5px; margin-left: auto; flex: none; }
+.tag {
+  padding: 1px 7px;
+  border: 1px solid var(--rule); border-radius: 999px;
+  font-size: .68rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--muted); white-space: nowrap;
+}
+.tag.match { border-color: var(--reading); color: var(--reading); }
+.r-meta, .r-first { color: var(--muted); font-size: .84rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.r-meta { font-variant-numeric: tabular-nums; }
+
+.src-opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.src-opts label { position: relative; }
+.src-opts input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.src-opts span {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 12px;
+  border: 1px solid var(--rule); border-radius: 999px;
+  background: var(--paper);
+  font-size: .85rem; color: var(--muted);
+}
+.src-opts span::before {
+  content: ""; width: 8px; height: 8px; border-radius: 50%;
+  border: 1.5px solid currentColor;
+}
+.src-opts input:checked + span { color: var(--ink); border-color: var(--reading); }
+.src-opts input:checked + span::before { background: var(--reading); border-color: var(--reading); }
+.src-opts input:focus-visible + span { outline: 2px solid var(--seal); outline-offset: 2px; }
+.sources { display: grid; gap: 18px; }
+.sources:empty { display: none; }
+.src-head {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+  margin: 0 0 8px;
+  font-size: .72rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--muted);
+}
+.src-state { font-weight: 500; letter-spacing: 0; text-transform: none; }
+.more {
+  margin-top: 8px; padding: 6px 2px;
+  border: 0; background: none;
+  color: var(--reading); font-size: .85rem; font-weight: 600;
+}
+.more:hover { text-decoration: underline; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  padding: 7px 12px;
+  border: 1px solid var(--rule); border-radius: 999px;
+  background: var(--paper);
+  font-size: .85rem;
+}
+.chip:hover { border-color: var(--muted); }
+
+details.paste summary { cursor: pointer; font-weight: 600; }
+details.paste form { display: grid; gap: 8px; margin-top: 10px; }
+details.paste input, details.paste textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--rule); border-radius: 10px;
+  background: var(--paper);
+}
+details.paste textarea { resize: vertical; min-height: 9em; line-height: 1.5; }
+details.paste .primary { justify-self: start; }
+
+.set-row { display: grid; gap: 8px; }
+.set-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.set-line input[type="range"] { flex: 1; accent-color: var(--seal); }
+.set-line select {
+  height: 36px; padding: 0 10px;
+  border: 1px solid var(--rule); border-radius: 8px;
+  background: var(--paper);
+}
+.toggle { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.toggle input { width: 18px; height: 18px; accent-color: var(--seal); }
+.seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 999px; overflow: hidden; }
+.seg label { position: relative; }
+.seg input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.seg span { display: block; padding: 6px 14px; font-size: .85rem; }
+.seg input:checked + span { background: var(--ink); color: var(--paper); }
+.seg input:focus-visible + span { outline: 2px solid var(--seal); outline-offset: -2px; }
+.keys { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: .85rem; color: var(--muted); }
+.keys dt { font-weight: 600; color: var(--ink); }
+.keys dd { margin: 0; }
+kbd { font: 600 .78rem var(--f-ui); padding: 1px 6px; border: 1px solid var(--rule); border-bottom-width: 2px; border-radius: 5px; background: var(--paper); }
+.foot { color: var(--muted); font-size: .8rem; margin: 0; }
+.foot a { color: inherit; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ln, .r { transition: none; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <button class="seal" id="brand" type="button" aria-label="Find lyrics" title="Find lyrics"><span lang="zh">歌</span></button>
+    <button class="song" id="songBtn" type="button" aria-label="Find lyrics">
+      <span class="song-title" id="songTitle">Lyric Scroll</span>
+      <span class="song-meta" id="songMeta">Loading…</span>
+    </button>
+    <label class="lang-chip">
+      <span class="sr">Lyrics language</span>
+      <select id="lang">
+        <option value="zh">Mandarin</option>
+        <option value="yue">Cantonese</option>
+        <option value="ja">Japanese</option>
+        <option value="ko">Korean</option>
+        <option value="th">Thai</option>
+      </select>
+    </label>
+    <button class="icon-btn" id="searchBtn" type="button" aria-label="Search lyrics" title="Search lyrics (/)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21"/></svg>
+    </button>
+    <button class="icon-btn" id="settingsBtn" type="button" aria-label="Display settings" title="Display settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+    </button>
+  </header>
+
+  <main class="stage-wrap" id="stageWrap">
+    <div class="stage" id="stage" tabindex="-1">
+      <div class="lyrics" id="lyrics" aria-live="off"></div>
+    </div>
+    <div class="band" aria-hidden="true"></div>
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  </main>
+
+  <footer class="transport">
+    <div class="progress" id="progress"></div>
+    <div class="deck">
+      <button class="icon-btn" id="prevLine" type="button" aria-label="Back one line" title="Back one line (↑)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg>
+      </button>
+      <button class="play" id="play" type="button" aria-label="Start scrolling" title="Start / pause (Space)">
+        <svg id="icoPlay" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg>
+        <svg id="icoPause" viewBox="0 0 24 24" fill="currentColor" hidden><rect x="6.5" y="5" width="4" height="14" rx="1"/><rect x="13.5" y="5" width="4" height="14" rx="1"/></svg>
+        <svg id="icoRestart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" hidden><path d="M4 12a8 8 0 1 0 2.6-5.9"/><path d="M4 4v5h5"/></svg>
+      </button>
+      <button class="icon-btn" id="nextLine" type="button" aria-label="Forward one line" title="Forward one line (↓)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+    </div>
+    <div class="speed">
+      <button class="icon-btn sm" id="slower" type="button" aria-label="Slower" title="Slower (←)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14"/></svg>
+      </button>
+      <label class="sr" for="speed">Scroll speed</label>
+      <input type="range" id="speed" min="0.2" max="3" step="0.05" value="1">
+      <button class="icon-btn sm" id="faster" type="button" aria-label="Faster" title="Faster (→)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+      <output class="speed-out" id="speedOut" for="speed"><b>1.00×</b><span>4.0 s per line</span></output>
+    </div>
+    <button class="fit" id="fit" type="button" title="Set the speed so the lyrics last as long as the song" hidden>Fit to song <span id="fitLen"></span></button>
+  </footer>
+</div>
+
+<dialog id="searchDlg" aria-labelledby="searchHd">
+  <div class="dlg-head">
+    <h2 id="searchHd">Find lyrics</h2>
+    <button class="icon-btn" type="button" data-close aria-label="Close">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="dlg-body">
+    <fieldset>
+      <legend class="label">Lyrics language</legend>
+      <div class="langs-opts" id="langOpts">
+        <label><input type="radio" name="lang2" value="zh"><span><b lang="zh-Hans">普通话</b>Mandarin</span></label>
+        <label><input type="radio" name="lang2" value="yue"><span><b lang="zh-HK">粵語</b>Cantonese</span></label>
+        <label><input type="radio" name="lang2" value="ja"><span><b lang="ja">日本語</b>Japanese</span></label>
+        <label><input type="radio" name="lang2" value="ko"><span><b lang="ko">한국어</b>Korean</span></label>
+        <label><input type="radio" name="lang2" value="th"><span><b lang="th">ไทย</b>Thai</span></label>
+      </div>
+    </fieldset>
+    <div>
+      <form class="search-row" id="searchForm" role="search">
+        <label class="sr" for="q">Song title or artist</label>
+        <input id="q" type="search" placeholder="Song title, artist, or both" autocomplete="off" enterkeyhint="search">
+        <button class="primary" id="searchGo" type="submit">Search</button>
+      </form>
+    </div>
+    <fieldset>
+      <legend class="label">Search in</legend>
+      <div class="src-opts" id="srcOpts"></div>
+    </fieldset>
+    <p class="hint" id="searchStatus">Type in any script, for example 晴天 周杰倫, 夜に駆ける or 봄날. Adding the artist narrows the results.</p>
+    <div class="sources" id="results"></div>
+    <section id="recentSec" hidden>
+      <h3 class="label">Recent</h3>
+      <ol class="results" id="recent"></ol>
+    </section>
+    <details class="paste" id="pasteBox">
+      <summary>Paste lyrics yourself</summary>
+      <form id="pasteForm">
+        <label class="sr" for="pasteTitle">Song title</label>
+        <input id="pasteTitle" placeholder="Song title (optional)" autocomplete="off">
+        <label class="sr" for="pasteText">Lyrics</label>
+        <textarea id="pasteText" rows="8" placeholder="Paste the lyrics here, one line per row"></textarea>
+        <button class="primary" type="submit">Show lyrics</button>
+      </form>
+    </details>
+    <section>
+      <h3 class="label">Samples (public domain)</h3>
+      <div class="chips" id="samples"></div>
+    </section>
+    <p class="foot">Lyrics come from QQ Music, Kugou and NetEase Cloud Music through the public <a href="https://github.com/metowolf/Meting" target="_blank" rel="noopener">Meting</a> API, and from <a href="https://lrclib.net" target="_blank" rel="noopener">LRCLIB</a>, a free community lyrics library.</p>
+  </div>
+</dialog>
+
+<dialog id="settingsDlg" aria-labelledby="setHd">
+  <div class="dlg-head">
+    <h2 id="setHd">Display</h2>
+    <button class="icon-btn" type="button" data-close aria-label="Close">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="dlg-body">
+    <div class="set-row">
+      <p class="label"><label for="fontSize">Text size</label></p>
+      <div class="set-line">
+        <span aria-hidden="true" style="font-size:.8rem">A</span>
+        <input type="range" id="fontSize" min="18" max="64" step="1">
+        <span aria-hidden="true" style="font-size:1.3rem">A</span>
+      </div>
+    </div>
+    <label class="toggle"><input type="checkbox" id="showRoman"> Show pronunciation under the lyrics</label>
+    <div class="set-line">
+      <label for="toneStyle">Mandarin tones</label>
+      <select id="toneStyle">
+        <option value="symbol">Marks (zhōng)</option>
+        <option value="num">Numbers (zhong1)</option>
+      </select>
+    </div>
+    <div class="set-line">
+      <label for="jaReading">Japanese reading</label>
+      <select id="jaReading">
+        <option value="romaji">Romaji (kimi)</option>
+        <option value="kana">Hiragana over kanji (きみ)</option>
+      </select>
+    </div>
+    <label class="toggle"><input type="checkbox" id="wake"> Keep the screen on while scrolling</label>
+    <div class="set-line">
+      <span id="themeLbl">Theme</span>
+      <div class="seg" role="radiogroup" aria-labelledby="themeLbl">
+        <label><input type="radio" name="theme" value="auto"><span>Auto</span></label>
+        <label><input type="radio" name="theme" value="light"><span>Light</span></label>
+        <label><input type="radio" name="theme" value="dark"><span>Dark</span></label>
+      </div>
+    </div>
+    <div>
+      <p class="label">Keyboard</p>
+      <dl class="keys">
+        <dt><kbd>Space</kbd></dt><dd>Start or pause scrolling</dd>
+        <dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Back or forward one line</dd>
+        <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Slower or faster</dd>
+        <dt><kbd>/</kbd></dt><dd>Search lyrics</dd>
+        <dt><kbd>Home</kbd></dt><dd>Back to the first line</dd>
+      </dl>
+    </div>
+    <p class="foot">Scroll or drag the lyrics any time to find your place; auto-scroll carries on from wherever you stop. Tap a line to move it to the gold reading line.</p>
+  </div>
+</dialog>
+
+<noscript><p style="padding:16px">Lyric Scroll needs JavaScript.</p></noscript>
+
+<script type="module">
+const CDN = 'https://cdn.jsdelivr.net/npm/';
+const LIB = {
+  pinyin: CDN + 'pinyin-pro@3.28.1/+esm',
+  opencc: CDN + 'opencc-js@1.0.5/+esm',
+  jyutping: CDN + 'to-jyutping@3.1.1/+esm',
+  korean: CDN + '@romanize/korean@0.1.3/+esm',
+  thai: CDN + '@pcampus/thai-romanization@1.0.0/+esm',
+  wanakana: CDN + 'wanakana@5.3.1/+esm',
+  kuromoji: CDN + 'kuromoji@0.1.2/build/kuromoji.js',
+  kuromojiDict: CDN + 'kuromoji@0.1.2/dict/',
+};
+const LRCLIB = 'https://lrclib.net/api/search?q=';
+// Meting (the API behind MetingJS) relays QQ Music, Kugou and NetEase search and lyrics with CORS enabled.
+const METING = 'https://api.i-meto.com/meting/api';
+const SOURCES = {
+  qq:      { name: 'QQ Music', server: 'tencent' },
+  kugou:   { name: 'Kugou',    server: 'kugou' },
+  netease: { name: 'NetEase',  server: 'netease' },
+  lrclib:  { name: 'LRCLIB' },
+};
+const sourceOrder = lang => (lang === 'zh' || lang === 'yue' ? ['qq', 'kugou', 'netease', 'lrclib'] : ['lrclib', 'qq', 'netease', 'kugou']);
+const SEC_PER_LINE_AT_1X = 4;
+
+const LANGS = {
+  zh:  { name: 'Mandarin',  tag: 'zh-Hans', script: '中文',  reading: 'pinyin',   loading: 'Loading pinyin…' },
+  yue: { name: 'Cantonese', tag: 'zh-HK',   script: '中文',  reading: 'Jyutping', loading: 'Loading Jyutping…' },
+  ja:  { name: 'Japanese',  tag: 'ja',      script: '日本語', reading: 'romaji',   loading: 'Loading the Japanese dictionary (about 12 MB, first time only)…' },
+  ko:  { name: 'Korean',    tag: 'ko',      script: '한국어', reading: 'romanization', loading: 'Loading Korean romanization…' },
+  th:  { name: 'Thai',      tag: 'th',      script: 'ไทย',   reading: 'romanization', loading: 'Loading Thai romanization…' },
+};
+
+const SAMPLES = {
+  zh: { title: 'Four Tang poems', artist: 'Li Bai · Meng Haoran · Wang Zhihuan · Wang Wei',
+    text: '静夜思 · 李白\n床前明月光\n疑是地上霜\n举头望明月\n低头思故乡\n\n春晓 · 孟浩然\n春眠不觉晓\n处处闻啼鸟\n夜来风雨声\n花落知多少\n\n登鹳雀楼 · 王之涣\n白日依山尽\n黄河入海流\n欲穷千里目\n更上一层楼\n\n相思 · 王维\n红豆生南国\n春来发几枝\n愿君多采撷\n此物最相思' },
+  yue: { title: '月光光', artist: 'Traditional Cantonese nursery rhyme',
+    text: '月光光 照地堂\n年卅晚 摘檳榔\n檳榔香 摘子薑\n子薑辣 買蒲達\n蒲達苦 買豬肚\n豬肚肥 買牛皮\n牛皮薄 買菱角\n菱角尖 買馬鞭\n馬鞭長 起屋梁' },
+  ja: { title: 'さくら さくら', artist: 'Traditional Japanese song · Bashō',
+    text: 'さくら さくら\n弥生の空は\n見渡す限り\n霞か雲か\n匂いぞ出ずる\nいざや いざや\n見に行かん\n\n松尾芭蕉\n古池や\n蛙飛び込む\n水の音' },
+  ko: { title: '아리랑', artist: 'Traditional Korean folk song',
+    text: '아리랑 아리랑 아라리요\n아리랑 고개로 넘어간다\n나를 버리고 가시는 님은\n십 리도 못 가서 발병 난다\n\n아리랑 아리랑 아라리요\n아리랑 고개로 넘어간다\n청천 하늘엔 잔별도 많고\n우리네 가슴엔 희망도 많다' },
+  th: { title: 'สุภาษิตไทย', artist: 'Thai proverbs',
+    text: 'น้ำขึ้นให้รีบตัก\nช้าๆ ได้พร้าเล่มงาม\nไม่มีใครแก่เกินเรียน\nรักวัวให้ผูก รักลูกให้ตี\nน้ำพึ่งเรือ เสือพึ่งป่า\nความพยายามอยู่ที่ไหน ความสำเร็จอยู่ที่นั่น' },
+};
+
+/* ---------- storage (per-device conveniences only) ---------- */
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('lyricscroll.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('lyricscroll.' + k, JSON.stringify(v)); } catch {} },
+};
+
+const $ = id => document.getElementById(id);
+const stage = $('stage'), lyricsEl = $('lyrics');
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const state = {
+  lang: LANGS[store.get('lang')] ? store.get('lang') : 'zh',
+  song: null,
+  speed: 1,
+  playing: false,
+  settings: Object.assign({ fs: innerWidth < 620 ? 26 : 34, roman: true, tones: 'symbol', jaReading: 'romaji', theme: 'auto', wake: true }, store.get('settings', {})),
+};
+const speeds = store.get('speeds', {});
+
+function h(tag, props = {}, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (v == null || v === false) continue;
+    if (k === 'class') el.className = v;
+    else if (k === 'text') el.textContent = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v === true ? '' : v);
+  }
+  el.append(...kids.filter(x => x != null && x !== false));
+  return el;
+}
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const fmtTime = s => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
+
+/* ---------- toast ---------- */
+let toastTimer = 0;
+function toast(msg, { sticky = false } = {}) {
+  const el = $('toast');
+  clearTimeout(toastTimer);
+  if (!msg) { el.hidden = true; return; }
+  el.textContent = msg;
+  el.hidden = false;
+  if (!sticky) toastTimer = setTimeout(() => { el.hidden = true; }, 3200);
+}
+
+/* ---------- script detection ---------- */
+const HAN = /\p{Script=Han}/u;
+const PUNCT = /^[\p{P}\p{S}]+$/u;
+const family = l => (l === 'yue' ? 'zh' : l);
+function detectLang(text) {
+  if (!text) return null;
+  const n = re => (text.match(re) || []).length;
+  const han = n(/\p{Script=Han}/gu), kana = n(/[\p{Script=Hiragana}\p{Script=Katakana}]/gu);
+  const hangul = n(/\p{Script=Hangul}/gu), thai = n(/\p{Script=Thai}/gu);
+  const top = Math.max(han + kana, hangul, thai);
+  if (!top) return null;
+  if (hangul === top) return 'ko';
+  if (thai === top) return 'th';
+  if (kana >= 3 && kana > 0.05 * (han + kana)) return 'ja';
+  return n(/[嘅咗哋冇唔喺嘢佢啲嚟乜噉咁]/gu) >= 3 ? 'yue' : 'zh';
+}
+
+/* ---------- romanization engines ---------- */
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src; s.async = true; s.crossOrigin = 'anonymous';
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('Could not load ' + src));
+    document.head.append(s);
+  });
+}
+
+// Han-script languages: one cell per character, Latin words kept together.
+function charCells(pairs) {
+  const cells = [];
+  let run = '';
+  const flush = () => { if (run) { cells.push({ g: run, r: '' }); run = ''; } };
+  for (const [ch, rd] of pairs) {
+    if (/^\s+$/.test(ch)) { flush(); cells.push({ space: true }); }
+    else if (HAN.test(ch)) { flush(); cells.push({ g: ch, r: rd || '' }); }
+    else if (PUNCT.test(ch)) { flush(); cells.push({ g: ch, r: '', p: true }); }
+    else run += ch;
+  }
+  flush();
+  return cells;
+}
+
+const ENGINES = {
+  async zh() {
+    const [pp, oc] = await Promise.all([import(LIB.pinyin), import(LIB.opencc)]);
+    const toSimplified = oc.Converter({ from: 'tw', to: 'cn' });
+    return line => {
+      const chars = Array.from(line);
+      // pinyin-pro reads simplified text best; convert only when it keeps a 1:1 character mapping
+      let src = chars;
+      try { const s = Array.from(toSimplified(line)); if (s.length === chars.length) src = s; } catch {}
+      const items = pp.pinyin(src.join(''), { type: 'all', toneType: state.settings.tones === 'num' ? 'num' : 'symbol' });
+      const aligned = items.length === chars.length;
+      return charCells(chars.map((c, i) => [c, HAN.test(c) ? (aligned ? items[i].pinyin : pp.pinyin(c)) : null]));
+    };
+  },
+  async yue() {
+    const m = await import(LIB.jyutping);
+    const T = m.default || m;
+    return line => charCells(T.getJyutpingList(line));
+  },
+  async ja() {
+    const [wk] = await Promise.all([import(LIB.wanakana), window.kuromoji ? null : loadScript(LIB.kuromoji)]);
+    const tokenizer = await new Promise((resolve, reject) =>
+      window.kuromoji.builder({ dicPath: LIB.kuromojiDict }).build((err, t) => (err ? reject(err) : resolve(t))));
+    const JP = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}ー]/u;
+    const PARTICLE = { 'は': 'ワ', 'へ': 'エ', 'を': 'オ' };
+    return line => {
+      const cells = [];
+      for (const t of tokenizer.tokenize(line)) {
+        const s = t.surface_form;
+        if (/^\s+$/.test(s)) { cells.push({ space: true }); continue; }
+        if (!JP.test(s)) { cells.push({ g: s, r: '', p: PUNCT.test(s) }); continue; }
+        if (state.settings.jaReading === 'kana') {
+          const kana = t.reading && t.reading !== '*' ? wk.toHiragana(t.reading) : '';
+          cells.push({ g: s, r: HAN.test(s) ? kana : '' });
+        } else {
+          let kana = t.reading && t.reading !== '*' ? t.reading : s;
+          if (t.pos === '助詞' && PARTICLE[s]) kana = PARTICLE[s];
+          cells.push({ g: s, r: wk.toRomaji(kana) });
+        }
+      }
+      return cells;
+    };
+  },
+  async ko() {
+    const m = await import(LIB.korean);
+    const K = m.default || m;
+    const HANGUL = /\p{Script=Hangul}/u;
+    return line => line.split(/(\s+)/).filter(Boolean).map(w =>
+      /^\s+$/.test(w) ? { space: true } : { g: w, r: HANGUL.test(w) ? safe(() => K.romanize(w)) : '' });
+  },
+  async th() {
+    const th = await import(LIB.thai);
+    const THAI = /\p{Script=Thai}/u;
+    const seg = typeof Intl.Segmenter === 'function' ? new Intl.Segmenter('th', { granularity: 'word' }) : null;
+    const split = line => (seg ? [...seg.segment(line)].map(x => x.segment) : line.split(/(\s+)/).filter(Boolean));
+    // The library mis-reads some compounds (หัวใจ → hawachai); when its units include a bare consonant, romanize syllable by syllable instead.
+    const word = w => safe(() => {
+      const units = th.getRomanizationUnits(w);
+      if (units.some(u => /^[ก-ฮ]$/.test(u))) return th.splitIntoSyllables(w).map(s => th.romanize(s)).join('');
+      return th.romanize(w);
+    });
+    return line => split(line).map(s =>
+      /^\s+$/.test(s) ? { space: true } : THAI.test(s) ? { g: s, r: word(s) } : { g: s, r: '', p: PUNCT.test(s) });
+  },
+};
+function safe(fn) { try { return fn() || ''; } catch { return ''; } }
+
+const engineCache = {};
+const engineReady = {};
+function engine(lang) {
+  if (!engineCache[lang]) {
+    engineCache[lang] = ENGINES[lang]().then(fn => { engineReady[lang] = true; return fn; })
+      .catch(err => { delete engineCache[lang]; throw err; });
+  }
+  return engineCache[lang];
+}
+
+/* ---------- lyrics rendering ---------- */
+const CREDIT = /^\s*(作词|作詞|作曲|编曲|編曲|填词|填詞|词|詞|曲|监制|監製|制作人|製作人|製作|和声|和聲|合声|合聲|和音|吉他|贝斯|貝斯|鼓|弦乐|弦樂|母带|母帶|混音师|混音師|录音师|錄音師|企划|企劃|统筹|統籌|出品人|发行|發行|原唱|演唱|歌手|出品|混音|录音|錄音|作詞・作曲|작사|작곡|편곡|คำร้อง|ทำนอง|เรียบเรียง|Lyrics|Composer|Arranger|Producer)\s*[:：]/i;
+
+const CREDIT_SHORT = /^\s*[^\s:：，。,!?！？][^:：，。!?！？]{0,23}[:：]\s*\S/u;
+
+let lineEls = [];   // every rendered line
+let readable = [];  // indexes into lineEls for lines with text
+let geo = null;     // cached centers of readable lines
+let currentK = -1;
+let renderSeq = 0;
+
+function buildLines(lines, fn) {
+  const frag = document.createDocumentFragment();
+  lineEls = []; readable = [];
+  lines.forEach(text => {
+    const el = h('p', { class: 'ln' });
+    if (!text.trim()) el.classList.add('gap');
+    else {
+      el.dataset.k = readable.length;
+      readable.push(lineEls.length);
+      // Chinese services list a dozen "role：name" credits before the first lyric
+      if (CREDIT.test(text) || (readable.length <= 15 && CREDIT_SHORT.test(text))) el.classList.add('credit');
+      const cells = fn ? safe(() => fn(text)) : null;
+      if (!cells || !cells.length) { el.classList.add('plain'); el.textContent = text; }
+      else {
+        for (const c of cells) {
+          if (c.space) { el.append(h('span', { class: 'sp' })); continue; }
+          el.append(h('span', { class: c.p ? 'c p' : 'c' },
+            h('span', { class: 'g', text: c.g }),
+            h('span', { class: 'r', text: c.r || ' ' })));
+        }
+      }
+    }
+    lineEls.push(el);
+    frag.append(el);
+  });
+  lyricsEl.replaceChildren(frag);
+  geo = null; currentK = -1;
+}
+
+async function renderLyrics({ keepPlace = false } = {}) {
+  const seq = ++renderSeq;
+  const song = state.song, lang = state.lang;
+  if (!song) return;
+  const anchor = keepPlace && readable.length ? clamp(currentK, 0, readable.length - 1) : null;
+  const lines = song.text.split(/\r?\n/);
+  lyricsEl.lang = LANGS[lang].tag;
+  lyricsEl.dataset.lang = lang;
+  lyricsEl.classList.toggle('no-roman', !state.settings.roman);
+
+  const place = () => {
+    measure();
+    if (anchor != null) jumpTo(anchor, false);
+    else setScroll(0);
+    updateView();
+    updateFit();
+  };
+
+  const wasReady = !!engineReady[lang];
+  if (!wasReady) {
+    buildLines(lines, null);
+    place();
+    toast(LANGS[lang].loading, { sticky: true });
+  }
+  let fn;
+  try { fn = await engine(lang); }
+  catch (err) {
+    if (seq === renderSeq) toast(`Couldn't load ${LANGS[lang].reading}. Check your connection, then pick the language again to retry.`, { sticky: true });
+    console.error(err);
+    return;
+  }
+  if (seq !== renderSeq) return;
+  const k = keepPlace || !wasReady ? currentK : null;
+  buildLines(lines, fn);
+  measure();
+  if (k != null && k >= 0) jumpTo(k, false);
+  else if (anchor != null) jumpTo(anchor, false);
+  else setScroll(0);
+  updateView();
+  updateFit();
+  if (!$('toast').hidden && $('toast').textContent.startsWith('Loading')) toast('');
+}
+
+/* ---------- geometry ---------- */
+let bandY = 200;
+function layoutStage() {
+  bandY = Math.round(stage.clientHeight * 0.36);
+  document.documentElement.style.setProperty('--band-y', bandY + 'px');
+  stage.style.paddingTop = bandY + 'px';
+  stage.style.paddingBottom = Math.max(0, stage.clientHeight - bandY) + 'px';
+  geo = null;
+}
+function measure() {
+  const centers = readable.map(i => { const el = lineEls[i]; return el.offsetTop + el.offsetHeight / 2; });
+  const n = centers.length;
+  const pitch = n > 1 ? (centers[n - 1] - centers[0]) / (n - 1) : (lineEls[readable[0]]?.offsetHeight || 80);
+  geo = { centers, pitch: Math.max(20, pitch) };
+  return geo;
+}
+const G = () => geo || measure();
+
+function nearestK(y) {
+  const c = G().centers;
+  if (!c.length) return -1;
+  let lo = 0, hi = c.length - 1;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (c[mid] < y) lo = mid + 1; else hi = mid; }
+  if (lo > 0 && Math.abs(c[lo - 1] - y) < Math.abs(c[lo] - y)) lo--;
+  return lo;
+}
+function targetFor(k) { return clamp(G().centers[k] - bandY, 0, stage.scrollHeight - stage.clientHeight); }
+function jumpTo(k, smooth = true) {
+  if (!readable.length) return;
+  k = clamp(k, 0, readable.length - 1);
+  const top = targetFor(k);
+  if (smooth && !reduceMotion) { holdUntil = performance.now() + 900; stage.scrollTo({ top, behavior: 'smooth' }); }
+  else setScroll(top);
+  pos = top;
+}
+
+/* ---------- view state: current line + progress ---------- */
+let viewQueued = false;
+function updateView() {
+  viewQueued = false;
+  const max = stage.scrollHeight - stage.clientHeight;
+  $('progress').style.width = (max > 0 ? (stage.scrollTop / max) * 100 : 0) + '%';
+  const k = nearestK(stage.scrollTop + bandY);
+  if (k !== currentK) {
+    currentK = k;
+    readable.forEach((i, j) => {
+      const el = lineEls[i];
+      el.classList.toggle('now', j === k);
+      el.classList.toggle('past', j < k);
+    });
+  }
+  updatePlayIcon();
+}
+function queueView() { if (!viewQueued) { viewQueued = true; requestAnimationFrame(updateView); } }
+
+/* ---------- auto-scroll ---------- */
+let raf = 0, lastT = 0, pos = 0, lastSet = -1, holdUntil = 0, holding = false;
+const pxPerSec = () => (state.speed * G().pitch) / SEC_PER_LINE_AT_1X;
+const atEnd = () => stage.scrollTop >= stage.scrollHeight - stage.clientHeight - 2;
+
+function setScroll(v) { lastSet = v; stage.scrollTop = v; pos = v; }
+
+function tick(t) {
+  raf = requestAnimationFrame(tick);
+  const dt = Math.min(0.5, (t - lastT) / 1000);
+  lastT = t;
+  if (holding || t < holdUntil) { pos = stage.scrollTop; return; }
+  if (Math.abs(stage.scrollTop - pos) > 3) pos = stage.scrollTop; // moved by scrollbar, keys or a resize
+  const max = stage.scrollHeight - stage.clientHeight;
+  const next = pos + pxPerSec() * dt;
+  if (next >= max) { setScroll(max); pause(); return; }
+  pos = next;
+  lastSet = next;
+  stage.scrollTop = next;
+}
+
+function play() {
+  if (!readable.length) return;
+  if (atEnd()) setScroll(0);
+  state.playing = true;
+  pos = stage.scrollTop;
+  lastT = performance.now();
+  cancelAnimationFrame(raf);
+  raf = requestAnimationFrame(tick);
+  wake(true);
+  updatePlayIcon();
+}
+function pause() {
+  state.playing = false;
+  cancelAnimationFrame(raf);
+  wake(false);
+  updatePlayIcon();
+}
+function updatePlayIcon() {
+  const end = !state.playing && readable.length && atEnd() && stage.scrollTop > 0;
+  $('icoPlay').hidden = state.playing || end;
+  $('icoPause').hidden = !state.playing;
+  $('icoRestart').hidden = !end;
+  $('play').setAttribute('aria-label', state.playing ? 'Pause scrolling' : end ? 'Start again from the top' : 'Start scrolling');
+}
+
+// Manual scrolling always wins: auto-scroll waits while a finger, wheel or scrollbar is moving the lyrics, then carries on from there.
+stage.addEventListener('scroll', () => {
+  if (Math.abs(stage.scrollTop - lastSet) > 3) holdUntil = performance.now() + 650;
+  updateView();
+}, { passive: true });
+stage.addEventListener('wheel', () => { holdUntil = performance.now() + 650; }, { passive: true });
+stage.addEventListener('touchstart', () => { holding = true; }, { passive: true });
+const release = () => { if (holding) { holding = false; holdUntil = performance.now() + 650; } };
+stage.addEventListener('touchend', release, { passive: true });
+stage.addEventListener('touchcancel', release, { passive: true });
+stage.addEventListener('pointerdown', e => { if (e.pointerType === 'mouse') holding = true; });
+addEventListener('pointerup', e => { if (e.pointerType === 'mouse') release(); });
+
+lyricsEl.addEventListener('click', e => {
+  const ln = e.target.closest('.ln');
+  if (!ln || ln.dataset.k == null) return;
+  if (String(getSelection?.() || '').length) return;
+  jumpTo(+ln.dataset.k);
+});
+
+/* ---------- wake lock ---------- */
+let wakeLock = null;
+async function wake(on) {
+  try {
+    if (on && state.settings.wake && 'wakeLock' in navigator) {
+      if (!wakeLock) {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => { wakeLock = null; });
+      }
+    } else if (wakeLock) { await wakeLock.release(); wakeLock = null; }
+  } catch {}
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && state.playing) { lastT = performance.now(); wake(true); }
+});
+
+/* ---------- speed ---------- */
+function setSpeed(v, save = true) {
+  v = Math.round(clamp(v, 0.2, 3) * 100) / 100;
+  state.speed = v;
+  $('speed').value = v;
+  $('speedOut').innerHTML = `<b>${v.toFixed(2)}×</b><span>${(SEC_PER_LINE_AT_1X / v).toFixed(1)} s per line</span>`;
+  if (save) {
+    store.set('speed', v);
+    if (state.song?.key) { speeds[state.song.key] = v; store.set('speeds', speeds); }
+  }
+}
+$('speed').addEventListener('input', e => setSpeed(+e.target.value));
+$('slower').addEventListener('click', () => setSpeed(state.speed - 0.05));
+$('faster').addEventListener('click', () => setSpeed(state.speed + 0.05));
+
+function songSecPerLine() {
+  const s = state.song;
+  if (!s) return 0;
+  if (s.times && s.times.length > 1) return (s.times[s.times.length - 1] - s.times[0]) / (s.times.length - 1);
+  if (s.duration && readable.length > 1) return (s.duration * 0.85) / readable.length; // allow for intro and outro
+  return 0;
+}
+function updateFit() {
+  const secs = songSecPerLine();
+  $('fit').hidden = !secs;
+  $('fitLen').textContent = state.song?.duration ? fmtTime(state.song.duration) : '';
+}
+$('fit').addEventListener('click', () => {
+  const secs = songSecPerLine();
+  if (!secs) return;
+  setSpeed(SEC_PER_LINE_AT_1X / secs);
+  toast(`Speed set to about ${secs.toFixed(1)} s per line. Fine-tune with − and +.`);
+});
+
+/* ---------- songs ---------- */
+const decodeEntities = s => (/&[#a-z0-9]+;/i.test(s) ? new DOMParser().parseFromString(s, 'text/html').documentElement.textContent : s);
+
+// Timed LRC → [{t, text}] in time order; a line with several timestamps repeats at each one.
+function parseLrc(s) {
+  const entries = [];
+  for (const raw of s.split(/\r?\n/)) {
+    const tags = [...raw.matchAll(/\[(\d+):(\d+(?:\.\d+)?)\]/g)];
+    if (!tags.length) continue;
+    const text = decodeEntities(raw.replace(/\[[^\]]*\]/g, '').trim());
+    for (const t of tags) entries.push({ t: +t[1] * 60 + +t[2], text });
+  }
+  return entries.sort((a, b) => a.t - b.t);
+}
+const lrcText = entries => entries.map(e => e.text).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+const lrcTimes = entries => { const t = entries.filter(e => e.text).map(e => e.t); return t.length > 1 ? t : null; };
+
+function songFromLrclib(r) {
+  const synced = r.syncedLyrics ? parseLrc(r.syncedLyrics) : null;
+  const text = (r.plainLyrics || (synced ? lrcText(synced) : '')).replace(/\n{3,}/g, '\n\n').trim();
+  return {
+    key: 'lrclib:' + r.id, source: 'lrclib',
+    title: r.trackName || 'Untitled', artist: r.artistName || '', album: r.albumName || '',
+    duration: r.duration || 0, text, times: synced ? lrcTimes(synced) : null,
+    instrumental: !!r.instrumental && !text,
+  };
+}
+
+// NetEase appends a Chinese translation to foreign-language lines: "沈むように (像是沉溺)". Keep only the original.
+const FOREIGN = /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Thai}A-Za-z]/u;
+function stripTranslation(text) {
+  const m = text.match(/^(.*?\S)\s*[（(]([^()（）]+)[)）]\s*$/);
+  if (!m || !FOREIGN.test(m[1]) || !HAN.test(m[2]) || /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Thai}]/u.test(m[2])) return text;
+  return m[1];
+}
+function songFromLrc(hit, lrc) {
+  let entries = parseLrc(lrc);
+  if (!entries.length && lrc.split('\n').length > 3) entries = lrc.split(/\r?\n/).map(l => ({ t: 0, text: l.replace(/\[[^\]]*\]/g, '').trim() }));
+  // QQ Music and Kugou open with a "Title - Artist" line
+  const norm = s => s.toLowerCase().replace(/[\s\-–—_·•]/g, '');
+  const i = entries.findIndex(e => e.text);
+  if (i >= 0 && / - /.test(entries[i].text) && norm(entries[i].text).includes(norm(hit.song.title.replace(/\s*[（(].*$/, '')))) entries.splice(i, 1);
+  if (hit.source === 'netease') entries = entries.map(e => ({ ...e, text: stripTranslation(e.text) }));
+  return { ...hit.song, text: lrcText(entries), times: lrcTimes(entries) };
+}
+function sampleSong(lang) {
+  const s = SAMPLES[lang];
+  return { key: 'sample:' + lang, source: 'sample', lang, title: s.title, artist: s.artist, text: s.text, duration: 0, times: null };
+}
+
+function loadSong(song, { detect = true, prefer = state.lang } = {}) {
+  pause();
+  let note = '';
+  if (detect) {
+    const det = detectLang(song.text);
+    const switched = det && family(det) !== family(prefer);
+    setLang(switched ? det : prefer, { rerender: false });
+    if (switched) note = `Switched to ${LANGS[det].name}: these lyrics are written in ${LANGS[det].script}.`;
+  } else if (song.lang) setLang(song.lang, { rerender: false });
+  song.lang = state.lang;
+  state.song = song;
+  store.set('last', song);
+  if (song.source !== 'sample') {
+    const recent = store.get('recent', []).filter(r => r.key !== song.key);
+    recent.unshift(song);
+    store.set('recent', recent.slice(0, 12));
+  }
+  $('songTitle').textContent = song.title;
+  $('songMeta').textContent = song.source === 'sample'
+    ? `${song.artist} · sample, tap to search for a song`
+    : [song.artist, song.album, SOURCES[song.source]?.name].filter(Boolean).join(' · ') || 'Your lyrics';
+  document.title = `${song.title} · Lyric Scroll`;
+  setSpeed(speeds[song.key] ?? store.get('speed', 1), false);
+  renderLyrics().then(() => { if (note && state.song === song) toast(note); });
+}
+
+/* ---------- language ---------- */
+// The header picker re-reads the song on screen; the picker in the search box only applies to the next song opened.
+function setLang(lang, { rerender = true } = {}) {
+  if (!LANGS[lang]) return;
+  state.lang = lang;
+  store.set('lang', lang);
+  $('lang').value = lang;
+  if (rerender && state.song) {
+    state.song.lang = lang;
+    store.set('last', state.song);
+    renderLyrics({ keepPlace: true });
+  }
+}
+$('lang').addEventListener('change', e => setLang(e.target.value));
+
+/* ---------- search ---------- */
+const RESULTS_SHOWN = 4;
+let lastResults = {};   // source → { state: 'loading' | 'done' | 'error', items, expanded }
+let lastQuery = '';
+let searchCtl = null;
+let searchLang = state.lang;
+let enabledSources = new Set(store.get('sources', Object.keys(SOURCES)).filter(s => SOURCES[s]));
+$('langOpts').addEventListener('change', e => {
+  if (e.target.name !== 'lang2') return;
+  searchLang = e.target.value;
+  store.set('lang', searchLang);
+  if (lastQuery) showResults();
+});
+$('srcOpts').append(...Object.entries(SOURCES).map(([id, s]) => h('label', {},
+  h('input', { type: 'checkbox', value: id, checked: enabledSources.has(id) }),
+  h('span', { text: s.name }))));
+$('srcOpts').addEventListener('change', e => {
+  if (e.target.checked) enabledSources.add(e.target.value); else enabledSources.delete(e.target.value);
+  store.set('sources', [...enabledSources]);
+});
+
+// LRCLIB and the Meting relay both answer 503 when busy (sometimes without CORS headers, which surfaces as a network error), so retry a few times.
+async function fetchRetry(url, signal, tries = 3) {
+  let lastErr;
+  for (let attempt = 1; attempt <= tries; attempt++) {
+    if (attempt > 1) {
+      await new Promise(r => setTimeout(r, 1200 * (attempt - 1)));
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    }
+    try {
+      const res = await fetch(url, { signal });
+      if (res.ok) return res;
+      lastErr = new Error('HTTP ' + res.status);
+      if (res.status < 500) break;
+    } catch (err) {
+      if (err.name === 'AbortError') throw err;
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
+
+async function searchLrclib(q, signal) {
+  const data = await (await fetchRetry(LRCLIB + encodeURIComponent(q), signal)).json();
+  const fam = family(searchLang);
+  const items = (Array.isArray(data) ? data : []).map(r => {
+    const song = songFromLrclib(r);
+    return { source: 'lrclib', song, det: detectLang(song.text), synced: !!song.times };
+  });
+  const score = x => (x.det && family(x.det) === fam ? 4 : 0) + (x.song.text ? 2 : 0) + (x.synced ? 1 : 0);
+  const seen = new Set();
+  return items.sort((a, b) => score(b) - score(a)).filter(x => {
+    const id = `${x.song.title}|${x.song.artist}|${Math.round(x.song.duration)}`.toLowerCase();
+    return !seen.has(id) && seen.add(id);
+  }).slice(0, 10);
+}
+
+async function searchMeting(source, q, signal) {
+  const url = `${METING}?server=${SOURCES[source].server}&type=search&id=${encodeURIComponent(q)}`;
+  const data = await (await fetchRetry(url, signal)).json();
+  const seen = new Set();
+  return (Array.isArray(data) ? data : []).filter(x => x && x.title && x.lrc).map(x => {
+    let id = '';
+    try { id = new URL(x.lrc).searchParams.get('id') || ''; } catch {}
+    return {
+      source, lrcUrl: x.lrc,
+      song: { key: `${source}:${id || x.title + '|' + x.author}`, source, title: x.title, artist: x.author || '', album: '', duration: 0, text: '', times: null },
+    };
+  }).filter(x => {
+    const id = `${x.song.title}|${x.song.artist}`.toLowerCase();
+    return !seen.has(id) && seen.add(id);
+  }).slice(0, 10);
+}
+
+async function runSearch(q) {
+  q = q.trim();
+  if (!q) { $('q').focus(); return; }
+  const sources = sourceOrder(searchLang).filter(s => enabledSources.has(s));
+  if (!sources.length) {
+    $('searchStatus').className = 'hint err';
+    $('searchStatus').textContent = 'Turn on at least one library to search.';
+    return;
+  }
+  searchCtl?.abort();
+  searchCtl = new AbortController();
+  const { signal } = searchCtl;
+  lastQuery = q;
+  lastResults = Object.fromEntries(sources.map(s => [s, { state: 'loading', items: [] }]));
+  showResults();
+  $('searchGo').disabled = true;
+  await Promise.all(sources.map(async source => {
+    try {
+      const items = source === 'lrclib' ? await searchLrclib(q, signal) : await searchMeting(source, q, signal);
+      if (!signal.aborted) lastResults[source] = { state: 'done', items };
+    } catch (err) {
+      if (err.name === 'AbortError' || signal.aborted) return;
+      console.error(source, err);
+      lastResults[source] = { state: 'error', items: [] };
+    }
+    if (!signal.aborted) showResults();
+  }));
+  if (signal.aborted) return;
+  $('searchGo').disabled = false;
+  if (Object.values(lastResults).every(r => !r.items.length)) $('pasteBox').open = true;
+}
+
+function showResults() {
+  const sources = sourceOrder(searchLang).filter(s => lastResults[s]);
+  const loading = sources.filter(s => lastResults[s].state === 'loading').length;
+  const total = sources.reduce((n, s) => n + lastResults[s].items.length, 0);
+  const failed = sources.filter(s => lastResults[s].state === 'error').map(s => SOURCES[s].name);
+  const status = $('searchStatus');
+  status.className = 'hint';
+  status.textContent = loading
+    ? `Searching ${sources.length === 1 ? SOURCES[sources[0]].name : sources.length + ' libraries'} for “${lastQuery}”…`
+    : total
+      ? `${total} result${total === 1 ? '' : 's'} for “${lastQuery}”.` + (failed.length ? ` ${failed.join(' and ')} didn't answer; search again in a minute to include ${failed.length > 1 ? 'them' : 'it'}.` : '')
+      : `No lyrics found for “${lastQuery}”. Try the title in its original script, add the artist, or paste the lyrics below.`;
+  $('results').replaceChildren(...sources.map(source => {
+    const r = lastResults[source];
+    const state = r.state === 'loading' ? 'Searching…' : r.state === 'error' ? "Didn't answer" : r.items.length ? `${r.items.length} found` : 'No results';
+    const shown = r.expanded ? r.items : r.items.slice(0, RESULTS_SHOWN);
+    const more = r.items.length - shown.length;
+    return h('section', { class: 'src' },
+      h('h3', { class: 'src-head' }, h('span', { text: SOURCES[source].name }), h('span', { class: 'src-state', text: state })),
+      shown.length ? h('ol', { class: 'results' }, ...shown.map(resultItem)) : null,
+      more > 0 ? h('button', { class: 'more', type: 'button', text: `Show ${more} more from ${SOURCES[source].name}`, onclick: () => { r.expanded = true; showResults(); } }) : null);
+  }));
+}
+
+function resultItem(hit) {
+  const { song, det, synced } = hit;
+  const match = det && family(det) === family(searchLang);
+  const first = song.text ? song.text.split('\n').filter(l => l.trim()).slice(0, 2).join(' / ') : '';
+  const meta = [song.artist, song.album, song.duration ? fmtTime(song.duration) : ''].filter(Boolean).join(' · ');
+  const note = h('span', { class: 'r-first', text: first || ' ' });
+  const btn = h('button', {
+    class: 'result', type: 'button', disabled: song.instrumental || (hit.source === 'lrclib' && !song.text),
+    onclick: () => openResult(hit, btn, note),
+  },
+    h('span', { class: 'r-top' },
+      h('span', { class: 'r-title', text: song.title }),
+      h('span', { class: 'r-tags' },
+        song.instrumental ? h('span', { class: 'tag', text: 'Instrumental' }) : null,
+        det ? h('span', { class: match ? 'tag match' : 'tag', text: LANGS[det].script }) : null,
+        synced ? h('span', { class: 'tag', text: 'Timed' }) : null)),
+    meta ? h('span', { class: 'r-meta', text: meta }) : null,
+    first ? note : null);
+  return h('li', {}, btn);
+}
+
+async function openResult(hit, btn, note) {
+  if (hit.source === 'lrclib') {
+    $('searchDlg').close();
+    loadSong({ ...hit.song }, { prefer: searchLang });
+    return;
+  }
+  // QQ Music, Kugou and NetEase results carry only a link to their lyrics, fetched on tap
+  if (!note.isConnected) btn.append(note);
+  note.textContent = 'Loading lyrics…';
+  btn.disabled = true;
+  try {
+    const song = songFromLrc(hit, await (await fetchRetry(hit.lrcUrl)).text());
+    if (!song.text) throw Object.assign(new Error('no lyrics'), { empty: true });
+    $('searchDlg').close();
+    loadSong(song, { prefer: searchLang });
+  } catch (err) {
+    console.error(err);
+    note.textContent = err.empty ? 'No lyrics for this version. Try another result.' : "Couldn't load these lyrics. Tap to try again.";
+    btn.disabled = !!err.empty;
+  }
+}
+
+function showRecent() {
+  const recent = store.get('recent', []);
+  $('recentSec').hidden = !recent.length;
+  $('recent').replaceChildren(...recent.map(s => h('li', {},
+    h('button', { class: 'result', type: 'button', onclick: () => { $('searchDlg').close(); loadSong({ ...s }, { detect: false }); } },
+      h('span', { class: 'r-top' },
+        h('span', { class: 'r-title', text: s.title }),
+        h('span', { class: 'r-tags' },
+          SOURCES[s.source] ? h('span', { class: 'tag', text: SOURCES[s.source].name }) : null,
+          h('span', { class: 'tag', text: LANGS[s.lang]?.name || '' }))),
+      h('span', { class: 'r-meta', text: [s.artist, s.album].filter(Boolean).join(' · ') || 'Pasted lyrics' })))));
+}
+
+$('searchForm').addEventListener('submit', e => { e.preventDefault(); runSearch($('q').value); });
+$('pasteForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const text = $('pasteText').value.replace(/\[\d+:\d+(?:\.\d+)?\]/g, '').trim();
+  if (!text) { $('pasteText').focus(); return; }
+  const title = $('pasteTitle').value.trim() || text.split('\n')[0].slice(0, 40);
+  let hash = 0;
+  for (const ch of title + text) hash = (hash * 31 + ch.codePointAt(0)) | 0;
+  $('searchDlg').close();
+  loadSong({ key: 'paste:' + hash, source: 'paste', title, artist: '', album: '', duration: 0, text, times: null }, { prefer: searchLang });
+});
+
+$('samples').append(...Object.keys(SAMPLES).map(l => h('button', {
+  class: 'chip', type: 'button', text: `${LANGS[l].name}: ${SAMPLES[l].title}`,
+  onclick: () => { $('searchDlg').close(); loadSong(sampleSong(l), { detect: false }); },
+})));
+
+/* ---------- dialogs ---------- */
+function openSearch() {
+  pause();
+  showRecent();
+  searchLang = state.lang;
+  const radio = document.querySelector(`input[name="lang2"][value="${searchLang}"]`);
+  if (radio) radio.checked = true;
+  if (lastQuery) showResults();
+  $('searchDlg').showModal();
+  if (matchMedia('(pointer: fine)').matches) $('q').focus();
+}
+for (const id of ['brand', 'songBtn', 'searchBtn']) $(id).addEventListener('click', openSearch);
+$('settingsBtn').addEventListener('click', () => $('settingsDlg').showModal());
+for (const dlg of document.querySelectorAll('dialog')) {
+  dlg.addEventListener('click', e => { if (e.target === dlg || e.target.closest('[data-close]')) dlg.close(); });
+}
+
+/* ---------- settings ---------- */
+function applySettings() {
+  const s = state.settings;
+  document.documentElement.style.setProperty('--fs', s.fs + 'px');
+  lyricsEl.classList.toggle('no-roman', !s.roman);
+  if (s.theme === 'auto') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', s.theme);
+  store.set('settings', s);
+}
+function initSettings() {
+  const s = state.settings;
+  $('fontSize').value = s.fs;
+  $('showRoman').checked = s.roman;
+  $('toneStyle').value = s.tones;
+  $('jaReading').value = s.jaReading;
+  $('wake').checked = s.wake;
+  const t = document.querySelector(`input[name="theme"][value="${s.theme}"]`);
+  if (t) t.checked = true;
+  applySettings();
+}
+let fsTimer = 0;
+$('fontSize').addEventListener('input', e => {
+  const k = currentK;
+  state.settings.fs = +e.target.value;
+  applySettings();
+  clearTimeout(fsTimer);
+  fsTimer = setTimeout(() => { geo = null; if (k >= 0) jumpTo(k, false); updateView(); }, 60);
+});
+$('showRoman').addEventListener('change', e => {
+  const k = currentK;
+  state.settings.roman = e.target.checked;
+  applySettings();
+  geo = null;
+  if (k >= 0) jumpTo(k, false);
+  updateView();
+});
+$('toneStyle').addEventListener('change', e => { state.settings.tones = e.target.value; applySettings(); if (state.lang === 'zh') renderLyrics({ keepPlace: true }); });
+$('jaReading').addEventListener('change', e => { state.settings.jaReading = e.target.value; applySettings(); if (state.lang === 'ja') renderLyrics({ keepPlace: true }); });
+$('wake').addEventListener('change', e => { state.settings.wake = e.target.checked; applySettings(); wake(state.playing); });
+document.querySelectorAll('input[name="theme"]').forEach(r => r.addEventListener('change', e => { state.settings.theme = e.target.value; applySettings(); }));
+
+/* ---------- transport + keyboard ---------- */
+$('play').addEventListener('click', () => (state.playing ? pause() : play()));
+$('prevLine').addEventListener('click', () => jumpTo(currentK - 1));
+$('nextLine').addEventListener('click', () => jumpTo(currentK + 1));
+
+addEventListener('keydown', e => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (document.querySelector('dialog[open]')) return;
+  if (e.target instanceof Element && e.target.closest('input, textarea, select, button')) return;
+  const k = e.key;
+  if (k === ' ' || k === 'k') { e.preventDefault(); state.playing ? pause() : play(); }
+  else if (k === 'ArrowUp') { e.preventDefault(); jumpTo(currentK - 1); }
+  else if (k === 'ArrowDown') { e.preventDefault(); jumpTo(currentK + 1); }
+  else if (k === 'ArrowLeft' || k === '-') { e.preventDefault(); setSpeed(state.speed - 0.05); }
+  else if (k === 'ArrowRight' || k === '+' || k === '=') { e.preventDefault(); setSpeed(state.speed + 0.05); }
+  else if (k === '/' || k === 's') { e.preventDefault(); openSearch(); }
+  else if (k === 'Home') { e.preventDefault(); jumpTo(0); }
+});
+
+/* ---------- layout observers ---------- */
+let lastStageH = 0;
+new ResizeObserver(() => {
+  if (stage.clientHeight === lastStageH) return;
+  lastStageH = stage.clientHeight;
+  const k = currentK;
+  layoutStage();
+  if (k >= 0) jumpTo(k, false);
+  queueView();
+}).observe(stage);
+new ResizeObserver(() => { geo = null; queueView(); }).observe(lyricsEl);
+document.fonts?.ready.then(() => { geo = null; queueView(); });
+
+/* ---------- start ---------- */
+initSettings();
+layoutStage();
+setLang(state.lang, { rerender: false });
+const last = store.get('last');
+if (last && last.text) loadSong(last, { detect: false });
+else loadSong(sampleSong(state.lang), { detect: false });
+</script>
+</body>
+</html>
