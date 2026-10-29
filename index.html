@@ -217,6 +217,36 @@ svg { display: block; }
 .ln.now .r { opacity: 1; }
 .sp { width: .45em; }
 .lyrics.no-roman .r { display: none; }
+.c.fixed .r { text-decoration: underline dotted; text-underline-offset: .2em; }
+.lyrics.editing .ln { cursor: default; }
+.lyrics.editing .r { display: block; opacity: 1; }
+.lyrics.editing .c:not(.p) { cursor: pointer; }
+.lyrics.editing .c:not(.p) .r {
+  min-width: 1.6em; text-align: center;
+  border-bottom: 1px dashed var(--reading);
+}
+.lyrics.editing .c:not(.p) .r.blank::after { content: "+"; color: var(--faint); }
+.lyrics.editing .c.fixed .r { color: var(--gold); border-bottom-color: var(--gold); }
+.lyrics.editing .c:not(.p):hover .r { background: var(--tint); }
+
+.edit-bar {
+  position: absolute; z-index: 4;
+  bottom: 14px; left: 50%; transform: translateX(-50%);
+  max-width: calc(100% - 32px);
+  display: flex; align-items: center; gap: 12px;
+  padding: 6px 6px 6px 16px;
+  border-radius: 999px;
+  background: var(--ink); color: var(--paper);
+  font-size: .85rem; font-weight: 500;
+  box-shadow: var(--shadow);
+  white-space: nowrap;
+}
+.edit-bar button {
+  padding: 6px 14px;
+  border: 0; border-radius: 999px;
+  background: var(--seal); color: var(--seal-ink);
+  font-weight: 600;
+}
 
 .toast {
   position: absolute; z-index: 4;
@@ -454,6 +484,28 @@ kbd { font: 600 .78rem var(--f-ui); padding: 1px 6px; border: 1px solid var(--ru
 .foot { color: var(--muted); font-size: .8rem; margin: 0; }
 .foot a { color: inherit; }
 
+.tools { display: flex; align-items: center; gap: 8px; justify-self: end; }
+.icon-btn[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+
+@media (max-width: 620px) {
+  dialog.compact { width: calc(100vw - 32px); height: auto; max-height: calc(100dvh - 32px); margin: auto; border-radius: 16px; }
+}
+.fix-glyph { font-size: 2.6rem; font-weight: 700; line-height: 1.2; text-align: center; }
+.fix-line { margin: -10px 0 0; text-align: center; color: var(--muted); font-size: .9rem; }
+#fixInput {
+  width: 100%; height: 48px;
+  padding: 0 14px;
+  border: 1px solid var(--rule); border-radius: 10px;
+  background: var(--paper);
+  font: 500 1.3rem var(--f-roman);
+  color: var(--reading);
+}
+#fixAuto, #fixTip { margin-top: 6px; }
+.scope-opts { display: grid; gap: 8px; }
+.scope-opts label { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.scope-opts input { width: 18px; height: 18px; margin: 0; accent-color: var(--seal); }
+.fix-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
 @media (prefers-reduced-motion: reduce) {
   .ln, .r { transition: none; }
 }
@@ -491,6 +543,10 @@ kbd { font: 600 .78rem var(--f-ui); padding: 1px 6px; border: 1px solid var(--ru
     </div>
     <div class="band" aria-hidden="true"></div>
     <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+    <div class="edit-bar" id="editBar" hidden>
+      <span>Tap any pronunciation to change it</span>
+      <button type="button" id="editDone">Done</button>
+    </div>
   </main>
 
   <footer class="transport">
@@ -519,7 +575,12 @@ kbd { font: 600 .78rem var(--f-ui); padding: 1px 6px; border: 1px solid var(--ru
       </button>
       <output class="speed-out" id="speedOut" for="speed"><b>1.00×</b><span>4.0 s per line</span></output>
     </div>
-    <button class="fit" id="fit" type="button" title="Set the speed so the lyrics last as long as the song" hidden>Fit to song <span id="fitLen"></span></button>
+    <div class="tools">
+      <button class="fit" id="fit" type="button" title="Set the speed so the lyrics last as long as the song" hidden>Fit to song <span id="fitLen"></span></button>
+      <button class="icon-btn" id="editBtn" type="button" aria-pressed="false" aria-label="Edit pronunciation" title="Edit pronunciation (E)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg>
+      </button>
+    </div>
   </footer>
 </div>
 
@@ -624,10 +685,58 @@ kbd { font: 600 .78rem var(--f-ui); padding: 1px 6px; border: 1px solid var(--ru
         <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Slower or faster</dd>
         <dt><kbd>/</kbd></dt><dd>Search lyrics</dd>
         <dt><kbd>Home</kbd></dt><dd>Back to the first line</dd>
+        <dt><kbd>E</kbd></dt><dd>Edit pronunciation on or off</dd>
       </dl>
+    </div>
+    <div class="set-row">
+      <p class="label">Pronunciation edits</p>
+      <p class="foot" id="fixCount">No edits saved yet.</p>
+      <div class="chips">
+        <button class="chip" type="button" id="fixCopy">Copy backup</button>
+        <button class="chip" type="button" id="fixClearSong">Clear edits for this song</button>
+      </div>
+      <details class="paste" id="fixRestoreBox">
+        <summary>Restore from a backup</summary>
+        <form id="fixRestore">
+          <label class="sr" for="fixRestoreText">Backup</label>
+          <textarea id="fixRestoreText" rows="4" placeholder="Paste a backup copied on another device"></textarea>
+          <button class="primary" type="submit">Restore</button>
+        </form>
+      </details>
     </div>
     <p class="foot">Scroll or drag the lyrics any time to find your place; auto-scroll carries on from wherever you stop. Tap a line to move it to the gold reading line.</p>
   </div>
+</dialog>
+
+<dialog id="fixDlg" class="compact" aria-labelledby="fixHd">
+  <div class="dlg-head">
+    <h2 id="fixHd">Edit pronunciation</h2>
+    <button class="icon-btn" type="button" data-close aria-label="Close">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <form class="dlg-body" id="fixForm">
+    <div class="fix-glyph" id="fixGlyph"></div>
+    <p class="fix-line" id="fixLine"></p>
+    <div>
+      <label class="label" for="fixInput">Pronunciation</label>
+      <input id="fixInput" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done">
+      <p class="foot" id="fixAuto"></p>
+      <p class="foot" id="fixTip">Tip: type tone numbers if that's easier. hang2 becomes háng, lv4 becomes lǜ.</p>
+    </div>
+    <fieldset>
+      <legend class="label">Use it for</legend>
+      <div class="scope-opts">
+        <label><input type="radio" name="fixScope" value="spot" checked> <span>Only this spot</span></label>
+        <label><input type="radio" name="fixScope" value="song"> <span id="scopeSong"></span></label>
+        <label><input type="radio" name="fixScope" value="all"> <span id="scopeAll"></span></label>
+      </div>
+    </fieldset>
+    <div class="fix-actions">
+      <button class="primary" type="submit">Save</button>
+      <button class="chip" type="button" id="fixReset">Use automatic</button>
+    </div>
+  </form>
 </dialog>
 
 <noscript><p style="padding:16px">Lyric Scroll needs JavaScript.</p></noscript>
@@ -692,6 +801,7 @@ const state = {
   song: null,
   speed: 1,
   playing: false,
+  editing: false,
   settings: Object.assign({ fs: innerWidth < 620 ? 26 : 34, roman: true, tones: 'symbol', jaReading: 'romaji', theme: 'auto', wake: true }, store.get('settings', {})),
 };
 const speeds = store.get('speeds', {});
@@ -785,7 +895,11 @@ const ENGINES = {
     return line => charCells(T.getJyutpingList(line));
   },
   async ja() {
+    patchKuromojiUrls();
     const [wk] = await Promise.all([import(LIB.wanakana), window.kuromoji ? null : loadScript(LIB.kuromoji)]);
+    // Without its dictionary kuromoji tries to unzip error pages and can freeze the tab, so check it is there first
+    const probe = await fetch(LIB.kuromojiDict + 'base.dat.gz', { method: 'HEAD' });
+    if (!probe.ok) throw new Error('Japanese dictionary unavailable: HTTP ' + probe.status);
     const tokenizer = await new Promise((resolve, reject) =>
       window.kuromoji.builder({ dicPath: LIB.kuromojiDict }).build((err, t) => (err ? reject(err) : resolve(t))));
     const JP = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}ー]/u;
@@ -832,6 +946,19 @@ const ENGINES = {
 };
 function safe(fn) { try { return fn() || ''; } catch { return ''; } }
 
+// kuromoji builds dictionary URLs with path.join, which collapses "https://" to "https:/".
+// On an http page the browser repairs that, but on an https page it resolves against the page's own host.
+let kuromojiPatched = false;
+function patchKuromojiUrls() {
+  if (kuromojiPatched) return;
+  kuromojiPatched = true;
+  const open = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+    if (typeof url === 'string') url = url.replace(/^(https?):\/(?!\/)/, '$1://');
+    return open.call(this, method, url, ...rest);
+  };
+}
+
 const engineCache = {};
 const engineReady = {};
 function engine(lang) {
@@ -847,6 +974,42 @@ const CREDIT = /^\s*(作词|作詞|作曲|编曲|編曲|填词|填詞|词|詞|�
 
 const CREDIT_SHORT = /^\s*[^\s:：，。,!?！？][^:：，。!?！？]{0,23}[:：]\s*\S/u;
 
+/* ---------- pronunciation edits (kept in this browser) ---------- */
+// spots: one cell of one song · words: every cell with that text in one song · everywhere: that text in every song of a language
+const fixes = Object.assign({ spots: {}, words: {}, everywhere: {} }, store.get('fixes', {}));
+const songScope = () => `${state.song.key}|${state.lang}`;
+function fixFor(li, ci, glyph) {
+  const sk = songScope();
+  const spot = fixes.spots[sk]?.[`${li}:${ci}`];
+  if (spot != null) return { r: spot, scope: 'spot' };
+  const word = fixes.words[sk]?.[glyph];
+  if (word != null) return { r: word, scope: 'song' };
+  const all = fixes.everywhere[state.lang]?.[glyph];
+  if (all != null) return { r: all, scope: 'all' };
+  return null;
+}
+function saveFixes() {
+  for (const level of Object.values(fixes)) for (const k of Object.keys(level)) if (!Object.keys(level[k]).length) delete level[k];
+  store.set('fixes', fixes);
+}
+const countFixes = () => Object.values(fixes).reduce((n, level) => n + Object.values(level).reduce((m, o) => m + Object.keys(o).length, 0), 0);
+
+// "hang2" → "háng", "lv4" → "lǜ": tone numbers are easier to type than marks
+function pinyinMarks(s) {
+  const MARKS = { a: 'āáǎà', e: 'ēéěè', i: 'īíǐì', o: 'ōóǒò', u: 'ūúǔù', 'ü': 'ǖǘǚǜ' };
+  return s.replace(/([a-zA-ZüÜvV]+)([1-5])/g, (m, syl, tone) => {
+    syl = syl.replace(/v/g, 'ü').replace(/V/g, 'Ü');
+    if (tone === '5') return syl;
+    const low = syl.toLowerCase();
+    let i = low.search(/[ae]/);
+    if (i < 0) i = low.indexOf('ou');
+    if (i < 0) for (let j = low.length - 1; j >= 0; j--) if ('iouü'.includes(low[j])) { i = j; break; }
+    if (i < 0) return syl;
+    const mark = MARKS[low[i]][tone - 1];
+    return syl.slice(0, i) + (syl[i] !== low[i] ? mark.toUpperCase() : mark) + syl.slice(i + 1);
+  });
+}
+
 let lineEls = [];   // every rendered line
 let readable = [];  // indexes into lineEls for lines with text
 let geo = null;     // cached centers of readable lines
@@ -856,7 +1019,7 @@ let renderSeq = 0;
 function buildLines(lines, fn) {
   const frag = document.createDocumentFragment();
   lineEls = []; readable = [];
-  lines.forEach(text => {
+  lines.forEach((text, li) => {
     const el = h('p', { class: 'ln' });
     if (!text.trim()) el.classList.add('gap');
     else {
@@ -867,11 +1030,15 @@ function buildLines(lines, fn) {
       const cells = fn ? safe(() => fn(text)) : null;
       if (!cells || !cells.length) { el.classList.add('plain'); el.textContent = text; }
       else {
+        let ci = 0;
         for (const c of cells) {
           if (c.space) { el.append(h('span', { class: 'sp' })); continue; }
-          el.append(h('span', { class: c.p ? 'c p' : 'c' },
+          const idx = ci++;
+          const fix = c.p ? null : fixFor(li, idx, c.g);
+          const reading = fix ? fix.r : c.r;
+          el.append(h('span', { class: 'c' + (c.p ? ' p' : '') + (fix ? ' fixed' : ''), 'data-li': li, 'data-ci': idx, 'data-scope': fix?.scope },
             h('span', { class: 'g', text: c.g }),
-            h('span', { class: 'r', text: c.r || ' ' })));
+            h('span', { class: reading ? 'r' : 'r blank', 'data-auto': c.r || '', text: reading || ' ' })));
         }
       }
     }
@@ -1003,6 +1170,7 @@ function tick(t) {
 
 function play() {
   if (!readable.length) return;
+  if (state.editing) setEditing(false);
   if (atEnd()) setScroll(0);
   state.playing = true;
   pos = stage.scrollTop;
@@ -1040,6 +1208,11 @@ stage.addEventListener('pointerdown', e => { if (e.pointerType === 'mouse') hold
 addEventListener('pointerup', e => { if (e.pointerType === 'mouse') release(); });
 
 lyricsEl.addEventListener('click', e => {
+  if (state.editing) {
+    const cell = e.target.closest('.c:not(.p)');
+    if (cell) openFix(cell);
+    return;
+  }
   const ln = e.target.closest('.ln');
   if (!ln || ln.dataset.k == null) return;
   if (String(getSelection?.() || '').length) return;
@@ -1402,7 +1575,7 @@ function openSearch() {
   if (matchMedia('(pointer: fine)').matches) $('q').focus();
 }
 for (const id of ['brand', 'songBtn', 'searchBtn']) $(id).addEventListener('click', openSearch);
-$('settingsBtn').addEventListener('click', () => $('settingsDlg').showModal());
+$('settingsBtn').addEventListener('click', () => { updateFixCount(); $('settingsDlg').showModal(); });
 for (const dlg of document.querySelectorAll('dialog')) {
   dlg.addEventListener('click', e => { if (e.target === dlg || e.target.closest('[data-close]')) dlg.close(); });
 }
@@ -1448,6 +1621,122 @@ $('jaReading').addEventListener('change', e => { state.settings.jaReading = e.ta
 $('wake').addEventListener('change', e => { state.settings.wake = e.target.checked; applySettings(); wake(state.playing); });
 document.querySelectorAll('input[name="theme"]').forEach(r => r.addEventListener('change', e => { state.settings.theme = e.target.value; applySettings(); }));
 
+/* ---------- editing pronunciation ---------- */
+function setEditing(on) {
+  state.editing = on;
+  if (on) pause();
+  lyricsEl.classList.toggle('editing', on);
+  $('editBtn').setAttribute('aria-pressed', String(on));
+  $('editBar').hidden = !on;
+  if (on && !lyricsEl.querySelector('.c')) toast('The pronunciation is still loading. Try again in a moment.');
+}
+$('editBtn').addEventListener('click', () => setEditing(!state.editing));
+$('editDone').addEventListener('click', () => setEditing(false));
+
+let fixCell = null;
+const fixTarget = cell => ({ li: cell.dataset.li, ci: cell.dataset.ci, glyph: cell.querySelector('.g').textContent });
+const SCOPE_NAMES = { spot: 'this spot', song: 'this song', all: 'all songs' };
+
+function openFix(cell) {
+  fixCell = cell;
+  const { li, glyph } = fixTarget(cell);
+  const r = cell.querySelector('.r');
+  const auto = r.dataset.auto || '';
+  const fixed = cell.classList.contains('fixed');
+  const lang = LANGS[state.lang];
+  $('fixGlyph').textContent = glyph;
+  $('fixGlyph').lang = lang.tag;
+  $('fixGlyph').style.fontFamily = getComputedStyle(lyricsEl).fontFamily;
+  $('fixLine').textContent = state.song.text.split(/\r?\n/)[+li] || '';
+  $('fixInput').value = fixed ? r.textContent.trim() : auto;
+  $('fixAuto').textContent = auto ? `Automatic: ${auto}` : 'There is no automatic pronunciation for this one.';
+  $('fixTip').hidden = state.lang !== 'zh' || state.settings.tones === 'num';
+  $('scopeSong').textContent = `Every “${glyph}” in this song`;
+  $('scopeAll').textContent = `Every “${glyph}” in all my ${lang.name} songs`;
+  const scope = cell.dataset.scope || 'spot';
+  document.querySelector(`input[name="fixScope"][value="${scope}"]`).checked = true;
+  $('fixReset').hidden = !fixed;
+  $('fixReset').textContent = `Use automatic (remove the edit for ${SCOPE_NAMES[scope]})`;
+  $('fixDlg').showModal();
+  $('fixInput').focus();
+  $('fixInput').select();
+}
+
+function afterFixChange(message) {
+  saveFixes();
+  $('fixDlg').close();
+  renderLyrics({ keepPlace: true });
+  toast(message);
+}
+
+$('fixForm').addEventListener('submit', e => {
+  e.preventDefault();
+  if (!fixCell) return;
+  const { li, ci, glyph } = fixTarget(fixCell);
+  let value = $('fixInput').value.trim();
+  if (state.lang === 'zh' && state.settings.tones !== 'num') value = pinyinMarks(value);
+  const scope = document.querySelector('input[name="fixScope"]:checked').value;
+  const sk = songScope();
+  // a wider edit should show here too, so drop this spot's own edit
+  delete fixes.spots[sk]?.[`${li}:${ci}`];
+  if (scope === 'spot') (fixes.spots[sk] ??= {})[`${li}:${ci}`] = value;
+  else if (scope === 'song') (fixes.words[sk] ??= {})[glyph] = value;
+  else (fixes.everywhere[state.lang] ??= {})[glyph] = value;
+  afterFixChange(scope === 'spot' ? `Saved: ${glyph} → ${value || '(blank)'}`
+    : scope === 'song' ? `Saved for every “${glyph}” in this song.`
+    : `Saved for every “${glyph}” in your ${LANGS[state.lang].name} songs.`);
+});
+
+$('fixReset').addEventListener('click', () => {
+  if (!fixCell) return;
+  const { li, ci, glyph } = fixTarget(fixCell);
+  const sk = songScope();
+  const scope = fixCell.dataset.scope;
+  if (scope === 'spot') delete fixes.spots[sk]?.[`${li}:${ci}`];
+  else if (scope === 'song') delete fixes.words[sk]?.[glyph];
+  else if (scope === 'all') delete fixes.everywhere[state.lang]?.[glyph];
+  afterFixChange('Edit removed.');
+});
+
+function updateFixCount() {
+  const n = countFixes();
+  $('fixCount').textContent = n
+    ? `${n} edit${n === 1 ? '' : 's'} saved in this browser. Copy a backup to move them to another device.`
+    : 'No edits saved yet. Use the pencil button to change a pronunciation.';
+}
+$('fixCopy').addEventListener('click', () => {
+  const backup = JSON.stringify({ app: 'lyric-scroll', fixes });
+  navigator.clipboard.writeText(backup).then(
+    () => toast('Backup copied. Paste it into “Restore from a backup” on your other device.'),
+    () => { $('fixRestoreBox').open = true; $('fixRestoreText').value = backup; $('fixRestoreText').select(); toast('Copy the selected text to keep your backup.'); });
+});
+$('fixRestore').addEventListener('submit', e => {
+  e.preventDefault();
+  let data;
+  try { data = JSON.parse($('fixRestoreText').value).fixes; } catch {}
+  if (!data || typeof data !== 'object') { toast("That doesn't look like a Lyric Scroll backup."); return; }
+  for (const level of ['spots', 'words', 'everywhere']) {
+    for (const [k, v] of Object.entries(data[level] || {})) {
+      if (v && typeof v === 'object') fixes[level][k] = Object.assign(fixes[level][k] || {}, v);
+    }
+  }
+  saveFixes();
+  updateFixCount();
+  $('fixRestoreText').value = '';
+  renderLyrics({ keepPlace: true });
+  toast('Backup restored.');
+});
+$('fixClearSong').addEventListener('click', () => {
+  if (!state.song) return;
+  const sk = songScope();
+  delete fixes.spots[sk];
+  delete fixes.words[sk];
+  saveFixes();
+  updateFixCount();
+  renderLyrics({ keepPlace: true });
+  toast('Edits for this song cleared. Edits saved for all songs are kept.');
+});
+
 /* ---------- transport + keyboard ---------- */
 $('play').addEventListener('click', () => (state.playing ? pause() : play()));
 $('prevLine').addEventListener('click', () => jumpTo(currentK - 1));
@@ -1465,6 +1754,8 @@ addEventListener('keydown', e => {
   else if (k === 'ArrowRight' || k === '+' || k === '=') { e.preventDefault(); setSpeed(state.speed + 0.05); }
   else if (k === '/' || k === 's') { e.preventDefault(); openSearch(); }
   else if (k === 'Home') { e.preventDefault(); jumpTo(0); }
+  else if (k === 'e') { e.preventDefault(); setEditing(!state.editing); }
+  else if (k === 'Escape' && state.editing) setEditing(false);
 });
 
 /* ---------- layout observers ---------- */
