@@ -229,6 +229,22 @@ svg { display: block; }
 .lyrics.editing .c.fixed .r { color: var(--gold); border-bottom-color: var(--gold); }
 .lyrics.editing .c:not(.p):hover .r { background: var(--tint); }
 
+/* Pronunciation on top: the reading becomes the main line and the characters shrink beneath it */
+.lyrics.roman-first .ln { column-gap: .2em; }
+.lyrics.roman-first .c { flex-direction: column-reverse; }
+.lyrics.roman-first .r {
+  margin: 0 0 .1em;
+  font-size: .72em; font-weight: 600;
+  color: inherit; opacity: 1;
+}
+.lyrics.roman-first .g { font-size: .48em; color: var(--reading); opacity: .7; transition: opacity .25s ease; }
+.lyrics.roman-first .ln.now .g { opacity: 1; }
+/* words with no reading of their own (English, punctuation) stay in the main line */
+.lyrics.roman-first .c.bare { flex-direction: column; }
+.lyrics.roman-first .c.bare .r { display: none; }
+.lyrics.roman-first .c.bare .g { font-size: .72em; color: inherit; opacity: 1; }
+.lyrics.roman-first.editing .c.bare:not(.p) .r { display: block; }
+
 .edit-bar {
   position: absolute; z-index: 4;
   bottom: 14px; left: 50%; transform: translateX(-50%);
@@ -304,9 +320,10 @@ svg { display: block; }
 .fit:hover { border-color: var(--muted); }
 
 @media (max-width: 620px) {
-  .transport { grid-template-columns: 1fr auto; }
+  .transport { grid-template-columns: 1fr auto; column-gap: 10px; }
   .speed { grid-column: 1 / -1; order: -1; }
-  .deck { gap: 14px; }
+  .deck { gap: 8px; }
+  .fit-long { display: none; }
 }
 
 /* ---------- dialogs ---------- */
@@ -486,6 +503,20 @@ kbd { font: 600 .78rem var(--f-ui); padding: 1px 6px; border: 1px solid var(--ru
 
 .tools { display: flex; align-items: center; gap: 8px; justify-self: end; }
 .icon-btn[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+/* the swap button is a miniature of the current layout: whatever is on top is drawn large */
+.swap {
+  height: 40px; min-width: 46px; padding: 0 8px;
+  display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  border: 1px solid var(--rule); border-radius: 10px;
+  background: var(--paper); color: var(--ink);
+  line-height: 1;
+}
+.swap:hover { border-color: var(--muted); }
+.swap .sw-g { font: 700 15px/1 var(--f-zh); }
+.swap .sw-r { font: 600 10px/1 var(--f-roman); color: var(--reading); }
+.swap[aria-pressed="true"] { flex-direction: column-reverse; }
+.swap[aria-pressed="true"] .sw-g { font-size: 10px; color: var(--reading); }
+.swap[aria-pressed="true"] .sw-r { font-size: 14px; color: var(--ink); }
 
 @media (max-width: 620px) {
   dialog.compact { width: calc(100vw - 32px); height: auto; max-height: calc(100dvh - 32px); margin: auto; border-radius: 16px; }
@@ -576,7 +607,10 @@ kbd { font: 600 .78rem var(--f-ui); padding: 1px 6px; border: 1px solid var(--ru
       <output class="speed-out" id="speedOut" for="speed"><b>1.00×</b><span>4.0 s per line</span></output>
     </div>
     <div class="tools">
-      <button class="fit" id="fit" type="button" title="Set the speed so the lyrics last as long as the song" hidden>Fit to song <span id="fitLen"></span></button>
+      <button class="fit" id="fit" type="button" title="Set the speed so the lyrics last as long as the song" hidden>Fit<span class="fit-long"> to song</span> <span id="fitLen"></span></button>
+      <button class="swap" id="swapBtn" type="button" aria-pressed="false" aria-label="Pronunciation on top" title="Swap: pronunciation on top or characters on top (P)">
+        <span class="sw-g" id="swapG">字</span><span class="sw-r" id="swapR">zì</span>
+      </button>
       <button class="icon-btn" id="editBtn" type="button" aria-pressed="false" aria-label="Edit pronunciation" title="Edit pronunciation (E)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg>
       </button>
@@ -653,7 +687,14 @@ kbd { font: 600 .78rem var(--f-ui); padding: 1px 6px; border: 1px solid var(--ru
         <span aria-hidden="true" style="font-size:1.3rem">A</span>
       </div>
     </div>
-    <label class="toggle"><input type="checkbox" id="showRoman"> Show pronunciation under the lyrics</label>
+    <label class="toggle"><input type="checkbox" id="showRoman"> Show pronunciation with the lyrics</label>
+    <div class="set-line">
+      <span id="orderLbl">Larger, on top</span>
+      <div class="seg" role="radiogroup" aria-labelledby="orderLbl">
+        <label><input type="radio" name="order" value="chars"><span>Characters</span></label>
+        <label><input type="radio" name="order" value="roman"><span>Pronunciation</span></label>
+      </div>
+    </div>
     <div class="set-line">
       <label for="toneStyle">Mandarin tones</label>
       <select id="toneStyle">
@@ -686,6 +727,7 @@ kbd { font: 600 .78rem var(--f-ui); padding: 1px 6px; border: 1px solid var(--ru
         <dt><kbd>/</kbd></dt><dd>Search lyrics</dd>
         <dt><kbd>Home</kbd></dt><dd>Back to the first line</dd>
         <dt><kbd>E</kbd></dt><dd>Edit pronunciation on or off</dd>
+        <dt><kbd>P</kbd></dt><dd>Swap pronunciation and characters</dd>
       </dl>
     </div>
     <div class="set-row">
@@ -766,11 +808,11 @@ const sourceOrder = lang => (lang === 'zh' || lang === 'yue' ? ['qq', 'kugou', '
 const SEC_PER_LINE_AT_1X = 4;
 
 const LANGS = {
-  zh:  { name: 'Mandarin',  tag: 'zh-Hans', script: '中文',  reading: 'pinyin',   loading: 'Loading pinyin…' },
-  yue: { name: 'Cantonese', tag: 'zh-HK',   script: '中文',  reading: 'Jyutping', loading: 'Loading Jyutping…' },
-  ja:  { name: 'Japanese',  tag: 'ja',      script: '日本語', reading: 'romaji',   loading: 'Loading the Japanese dictionary (about 12 MB, first time only)…' },
-  ko:  { name: 'Korean',    tag: 'ko',      script: '한국어', reading: 'romanization', loading: 'Loading Korean romanization…' },
-  th:  { name: 'Thai',      tag: 'th',      script: 'ไทย',   reading: 'romanization', loading: 'Loading Thai romanization…' },
+  zh:  { name: 'Mandarin',  tag: 'zh-Hans', script: '中文',  reading: 'pinyin',   demo: ['字', 'zì'],    loading: 'Loading pinyin…' },
+  yue: { name: 'Cantonese', tag: 'zh-HK',   script: '中文',  reading: 'Jyutping', demo: ['字', 'zi6'],   loading: 'Loading Jyutping…' },
+  ja:  { name: 'Japanese',  tag: 'ja',      script: '日本語', reading: 'romaji',   demo: ['字', 'ji'],    loading: 'Loading the Japanese dictionary (about 12 MB, first time only)…' },
+  ko:  { name: 'Korean',    tag: 'ko',      script: '한국어', reading: 'romanization', demo: ['한', 'han'], loading: 'Loading Korean romanization…' },
+  th:  { name: 'Thai',      tag: 'th',      script: 'ไทย',   reading: 'romanization', demo: ['ไทย', 'thai'], loading: 'Loading Thai romanization…' },
 };
 
 const SAMPLES = {
@@ -802,7 +844,7 @@ const state = {
   speed: 1,
   playing: false,
   editing: false,
-  settings: Object.assign({ fs: innerWidth < 620 ? 26 : 34, roman: true, tones: 'symbol', jaReading: 'romaji', theme: 'auto', wake: true }, store.get('settings', {})),
+  settings: Object.assign({ fs: innerWidth < 620 ? 26 : 34, roman: true, romanFirst: false, tones: 'symbol', jaReading: 'romaji', theme: 'auto', wake: true }, store.get('settings', {})),
 };
 const speeds = store.get('speeds', {});
 
@@ -1036,7 +1078,7 @@ function buildLines(lines, fn) {
           const idx = ci++;
           const fix = c.p ? null : fixFor(li, idx, c.g);
           const reading = fix ? fix.r : c.r;
-          el.append(h('span', { class: 'c' + (c.p ? ' p' : '') + (fix ? ' fixed' : ''), 'data-li': li, 'data-ci': idx, 'data-scope': fix?.scope },
+          el.append(h('span', { class: 'c' + (c.p ? ' p' : '') + (fix ? ' fixed' : '') + (reading ? '' : ' bare'), 'data-li': li, 'data-ci': idx, 'data-scope': fix?.scope },
             h('span', { class: 'g', text: c.g }),
             h('span', { class: reading ? 'r' : 'r blank', 'data-auto': c.r || '', text: reading || ' ' })));
         }
@@ -1352,6 +1394,7 @@ function setLang(lang, { rerender = true } = {}) {
   state.lang = lang;
   store.set('lang', lang);
   $('lang').value = lang;
+  updateSwapDemo();
   if (rerender && state.song) {
     state.song.lang = lang;
     store.set('last', state.song);
@@ -1585,6 +1628,11 @@ function applySettings() {
   const s = state.settings;
   document.documentElement.style.setProperty('--fs', s.fs + 'px');
   lyricsEl.classList.toggle('no-roman', !s.roman);
+  lyricsEl.classList.toggle('roman-first', s.roman && s.romanFirst);
+  $('swapBtn').setAttribute('aria-pressed', String(s.roman && s.romanFirst));
+  $('swapBtn').setAttribute('aria-label', s.romanFirst ? 'Characters on top' : 'Pronunciation on top');
+  const order = document.querySelector(`input[name="order"][value="${s.romanFirst ? 'roman' : 'chars'}"]`);
+  if (order) order.checked = true;
   if (s.theme === 'auto') document.documentElement.removeAttribute('data-theme');
   else document.documentElement.setAttribute('data-theme', s.theme);
   store.set('settings', s);
@@ -1608,14 +1656,30 @@ $('fontSize').addEventListener('input', e => {
   clearTimeout(fsTimer);
   fsTimer = setTimeout(() => { geo = null; if (k >= 0) jumpTo(k, false); updateView(); }, 60);
 });
-$('showRoman').addEventListener('change', e => {
+// Layout changes move every line, so keep the current line on the reading line
+function relayout(change) {
   const k = currentK;
-  state.settings.roman = e.target.checked;
+  change();
   applySettings();
   geo = null;
   if (k >= 0) jumpTo(k, false);
   updateView();
-});
+}
+$('showRoman').addEventListener('change', e => relayout(() => { state.settings.roman = e.target.checked; }));
+function setRomanFirst(on) {
+  relayout(() => {
+    state.settings.romanFirst = on;
+    if (on && !state.settings.roman) { state.settings.roman = true; $('showRoman').checked = true; }
+  });
+}
+$('swapBtn').addEventListener('click', () => setRomanFirst(!(state.settings.roman && state.settings.romanFirst)));
+document.querySelectorAll('input[name="order"]').forEach(r => r.addEventListener('change', e => setRomanFirst(e.target.value === 'roman')));
+function updateSwapDemo() {
+  const [g, r] = LANGS[state.lang].demo;
+  $('swapG').textContent = g;
+  $('swapG').lang = LANGS[state.lang].tag;
+  $('swapR').textContent = r;
+}
 $('toneStyle').addEventListener('change', e => { state.settings.tones = e.target.value; applySettings(); if (state.lang === 'zh') renderLyrics({ keepPlace: true }); });
 $('jaReading').addEventListener('change', e => { state.settings.jaReading = e.target.value; applySettings(); if (state.lang === 'ja') renderLyrics({ keepPlace: true }); });
 $('wake').addEventListener('change', e => { state.settings.wake = e.target.checked; applySettings(); wake(state.playing); });
@@ -1755,6 +1819,7 @@ addEventListener('keydown', e => {
   else if (k === '/' || k === 's') { e.preventDefault(); openSearch(); }
   else if (k === 'Home') { e.preventDefault(); jumpTo(0); }
   else if (k === 'e') { e.preventDefault(); setEditing(!state.editing); }
+  else if (k === 'p') { e.preventDefault(); setRomanFirst(!(state.settings.roman && state.settings.romanFirst)); }
   else if (k === 'Escape' && state.editing) setEditing(false);
 });
 
