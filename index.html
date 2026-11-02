@@ -536,6 +536,9 @@ kbd { font: 600 .78rem var(--f-ui); padding: 1px 6px; border: 1px solid var(--ru
 .scope-opts label { display: flex; align-items: center; gap: 10px; cursor: pointer; }
 .scope-opts input { width: 18px; height: 18px; margin: 0; accent-color: var(--seal); }
 .fix-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+#syncStatus.err { color: var(--seal); }
+.steps { margin: 10px 0 0; padding-left: 1.2em; display: grid; gap: 6px; }
+.steps code { font-size: .9em; padding: 0 4px; border-radius: 4px; background: var(--paper); border: 1px solid var(--rule); }
 
 @media (prefers-reduced-motion: reduce) {
   .ln, .r { transition: none; }
@@ -746,6 +749,27 @@ kbd { font: 600 .78rem var(--f-ui); padding: 1px 6px; border: 1px solid var(--ru
         </form>
       </details>
     </div>
+    <div class="set-row">
+      <p class="label">Sync edits across devices</p>
+      <p class="foot" id="syncStatus">Off. Edits are saved on this device only.</p>
+      <form class="search-row" id="syncForm">
+        <label class="sr" for="syncToken">GitHub access key</label>
+        <input id="syncToken" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste your GitHub access key">
+        <button class="primary" type="submit">Connect</button>
+      </form>
+      <div class="chips" id="syncActions" hidden>
+        <button class="chip" type="button" id="syncNowBtn">Sync now</button>
+        <button class="chip" type="button" id="syncOff">Turn off on this device</button>
+      </div>
+      <details class="paste">
+        <summary>How to set up sync</summary>
+        <ol class="foot steps">
+          <li>On GitHub, create a <b>private</b> repository named <code>lyric-scroll-data</code>.</li>
+          <li>Create an access key with <a id="syncKeyLink" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">this pre-filled form</a>. Under <b>Repository access</b> choose <b>Only select repositories</b> and pick <code>lyric-scroll-data</code>, then click <b>Generate token</b> and copy it.</li>
+          <li>Paste the key above and press <b>Connect</b>. Do the same once on each of your devices.</li>
+        </ol>
+      </details>
+    </div>
     <p class="foot">Scroll or drag the lyrics any time to find your place; auto-scroll carries on from wherever you stop. Tap a line to move it to the gold reading line.</p>
   </div>
 </dialog>
@@ -769,7 +793,7 @@ kbd { font: 600 .78rem var(--f-ui); padding: 1px 6px; border: 1px solid var(--ru
     <fieldset>
       <legend class="label">Use it for</legend>
       <div class="scope-opts">
-        <label><input type="radio" name="fixScope" value="spot" checked> <span>Only this spot</span></label>
+        <label><input type="radio" name="fixScope" value="spot" checked> <span>Only this line (and wherever it repeats)</span></label>
         <label><input type="radio" name="fixScope" value="song"> <span id="scopeSong"></span></label>
         <label><input type="radio" name="fixScope" value="all"> <span id="scopeAll"></span></label>
       </div>
@@ -831,7 +855,7 @@ const SAMPLES = {
 /* ---------- storage (per-device conveniences only) ---------- */
 const store = {
   get(k, d) { try { const v = localStorage.getItem('lyricscroll.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
-  set(k, v) { try { localStorage.setItem('lyricscroll.' + k, JSON.stringify(v)); } catch {} },
+  set(k, v) { try { localStorage.setItem('lyricscroll.' + k, JSON.stringify(v)); return true; } catch { return false; } },
 };
 
 const $ = id => document.getElementById(id);
@@ -1017,23 +1041,256 @@ const CREDIT = /^\s*(作词|作詞|作曲|编曲|編曲|填词|填詞|词|詞|�
 const CREDIT_SHORT = /^\s*[^\s:：，。,!?！？][^:：，。!?！？]{0,23}[:：]\s*\S/u;
 
 /* ---------- pronunciation edits (kept in this browser) ---------- */
-// spots: one cell of one song · words: every cell with that text in one song · everywhere: that text in every song of a language
-const fixes = Object.assign({ spots: {}, words: {}, everywhere: {} }, store.get('fixes', {}));
-const songScope = () => `${state.song.key}|${state.lang}`;
-function fixFor(li, ci, glyph) {
-  const sk = songScope();
-  const spot = fixes.spots[sk]?.[`${li}:${ci}`];
+// spots: one word in one line of a song, wherever that exact line repeats · words: every cell with that text in one song ·
+// everywhere: that text in every song of a language. Songs are matched by title, so edits still show when the
+// same song is opened from another library.
+const fixes = { spots: {}, words: {}, everywhere: {} };
+function reloadFixes() {
+  const saved = store.get('fixes', {}) || {};
+  for (const level of Object.keys(fixes)) fixes[level] = saved[level] && typeof saved[level] === 'object' ? saved[level] : {};
+}
+reloadFixes();
+// "晴天 (Live)", "夜に駆ける (向夜晚奔去)" and "夜に駆ける - From THE FIRST TAKE" all count as the same song
+const normTitle = s => (s || '').toLowerCase()
+  .replace(/\s*[（(\[【][^）)\]】]*[）)\]】]/g, '')
+  .replace(/\s+-\s+.*$/, '')
+  .replace(/[\s\p{P}\p{S}]/gu, '');
+const songScope = () => `title:${normTitle(state.song.title) || state.song.key}|${state.lang}`;
+const legacyScope = () => `${state.song.key}|${state.lang}`;   // how edits were filed before songs were matched by title
+const lineKey = (text, ci) => `${text.trim().replace(/\s+/g, ' ')}#${ci}`;
+function fixFor(text, li, ci, glyph) {
+  const sk = songScope(), lk = legacyScope();
+  const spot = fixes.spots[sk]?.[lineKey(text, ci)] ?? fixes.spots[lk]?.[`${li}:${ci}`];
   if (spot != null) return { r: spot, scope: 'spot' };
-  const word = fixes.words[sk]?.[glyph];
+  const word = fixes.words[sk]?.[glyph] ?? fixes.words[lk]?.[glyph];
   if (word != null) return { r: word, scope: 'song' };
   const all = fixes.everywhere[state.lang]?.[glyph];
   if (all != null) return { r: all, scope: 'all' };
   return null;
 }
-function saveFixes() {
+// Re-read the saved edits right before every change, so a second open window can't overwrite edits saved in the first.
+// Returns false when the browser refused to save (private browsing, storage full).
+function changeFixes(mutate) {
+  reloadFixes();
+  reloadMeta();
+  const before = flattenFixes(fixes);
+  mutate();
   for (const level of Object.values(fixes)) for (const k of Object.keys(level)) if (!Object.keys(level[k]).length) delete level[k];
-  store.set('fixes', fixes);
+  // date every change, and leave a dated marker for every removal, so devices can merge their edits later
+  const after = flattenFixes(fixes);
+  const now = Date.now();
+  for (const [id, v] of Object.entries(after)) if (before[id] !== v) { fixMeta.stamps[id] = now; delete fixMeta.tombs[id]; }
+  for (const id of Object.keys(before)) if (!(id in after)) { fixMeta.tombs[id] = now; delete fixMeta.stamps[id]; }
+  const ok = store.set('fixes', fixes) && store.set('fixMeta', fixMeta);
+  // ask the browser not to clear the app's storage when the device runs low on space
+  navigator.storage?.persist?.().catch(() => {});
+  scheduleSync();
+  return ok;
 }
+
+// Each edit flattened to one id ("level␟song␟key") so two copies can be compared edit by edit
+const FIX_LEVELS = ['spots', 'words', 'everywhere'];
+const ID_SEP = '␟';
+function flattenFixes(f) {
+  const out = {};
+  for (const lv of FIX_LEVELS) for (const [scope, o] of Object.entries(f?.[lv] || {})) for (const [k, v] of Object.entries(o || {})) out[lv + ID_SEP + scope + ID_SEP + k] = v;
+  return out;
+}
+function unflattenFixes(flat) {
+  const f = { spots: {}, words: {}, everywhere: {} };
+  for (const [id, v] of Object.entries(flat)) {
+    const [lv, scope, ...rest] = id.split(ID_SEP);
+    if (f[lv]) (f[lv][scope] ??= {})[rest.join(ID_SEP)] = v;
+  }
+  return f;
+}
+let fixMeta = { stamps: {}, tombs: {} };
+function reloadMeta() {
+  const m = store.get('fixMeta', {}) || {};
+  fixMeta = { stamps: m.stamps || {}, tombs: m.tombs || {} };
+}
+reloadMeta();
+
+/* ---------- syncing edits across devices, through a private GitHub repository ---------- */
+// For each edit the most recent change wins, whether it was a new value or a removal, so devices that edited
+// while offline still end up agreeing.
+function mergeEdits(local, remote) {
+  const lf = flattenFixes(local.fixes), rf = flattenFixes(remote.fixes);
+  const ls = local.stamps || {}, rs = remote.stamps || {}, lt = local.tombs || {}, rt = remote.tombs || {};
+  const ids = new Set([...Object.keys(lf), ...Object.keys(rf), ...Object.keys(lt), ...Object.keys(rt)]);
+  const values = {}, stamps = {}, tombs = {};
+  for (const id of ids) {
+    const lStamp = id in lf ? (ls[id] || 0) : -1, rStamp = id in rf ? (rs[id] || 0) : -1;
+    const removed = Math.max(lt[id] ?? -1, rt[id] ?? -1);
+    if (removed > Math.max(lStamp, rStamp)) { tombs[id] = removed; continue; }
+    const fromLocal = lStamp >= rStamp;
+    values[id] = fromLocal ? lf[id] : rf[id];
+    const t = fromLocal ? lStamp : rStamp;
+    if (t > 0) stamps[id] = t;
+  }
+  return { fixes: unflattenFixes(values), stamps, tombs };
+}
+const canon = o => JSON.stringify(Object.keys(o).sort().map(k => [k, o[k]]));
+const sameEdits = (a, b) => canon(flattenFixes(a.fixes)) === canon(flattenFixes(b.fixes))
+  && canon(a.stamps || {}) === canon(b.stamps || {}) && canon(a.tombs || {}) === canon(b.tombs || {});
+
+const SYNC_REPO = 'lyric-scroll-data';
+const SYNC_FILE = 'edits.json';
+const cloud = { token: store.get('syncToken', ''), owner: store.get('syncOwner', ''), last: store.get('syncLast', 0), error: '', busy: false, again: false, timer: 0 };
+const syncOn = () => !!(cloud.token && cloud.owner);
+
+function gh(path, init = {}) {
+  return fetch('https://api.github.com' + path, {
+    ...init,
+    cache: 'no-store',
+    headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${cloud.token}`, ...(init.body ? { 'Content-Type': 'application/json' } : {}) },
+  });
+}
+const toBase64 = s => { const b = new TextEncoder().encode(s); let bin = ''; for (let i = 0; i < b.length; i += 0x8000) bin += String.fromCharCode(...b.subarray(i, i + 0x8000)); return btoa(bin); };
+const fromBase64 = s => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\s/g, '')), c => c.charCodeAt(0)));
+function syncProblem(status) {
+  if (status === 401) return 'Sync stopped: GitHub rejected the access key (it may have expired). Paste a new key in Settings.';
+  if (status === 403) return `Sync stopped: the access key isn't allowed to save to ${SYNC_REPO}. Give it Contents: Read and write.`;
+  if (status === 404) return `Sync stopped: the access key can't see the private repository ${SYNC_REPO}.`;
+  return `Sync hit a GitHub error (${status}). It will try again shortly.`;
+}
+
+function scheduleSync(delay = 1500) {
+  if (!syncOn()) return;
+  clearTimeout(cloud.timer);
+  cloud.timer = setTimeout(() => syncNow(), delay);
+}
+
+async function syncNow({ announce = false } = {}) {
+  if (!syncOn()) return;
+  if (cloud.busy) { cloud.again = true; return; }
+  cloud.busy = true;
+  updateSyncStatus('Syncing…');
+  const path = `/repos/${cloud.owner}/${SYNC_REPO}/contents/${SYNC_FILE}`;
+  try {
+    for (let attempt = 1; ; attempt++) {
+      const res = await gh(path);
+      let remote = { fixes: {}, stamps: {}, tombs: {} }, sha;
+      if (res.ok) {
+        const file = await res.json();
+        sha = file.sha;
+        try { remote = Object.assign(remote, JSON.parse(fromBase64(file.content))); } catch {}
+      } else if (res.status !== 404 && res.status !== 409) throw new Error(syncProblem(res.status)); // 404/409: no file yet, or a brand-new empty repository
+      reloadFixes();
+      reloadMeta();
+      const local = { fixes, ...fixMeta };
+      const merged = mergeEdits(local, remote);
+      if (!sameEdits(merged, local)) {
+        for (const lv of FIX_LEVELS) fixes[lv] = merged.fixes[lv];
+        fixMeta = { stamps: merged.stamps, tombs: merged.tombs };
+        store.set('fixes', fixes);
+        store.set('fixMeta', fixMeta);
+        if (state.song) renderLyrics({ keepPlace: true });
+      }
+      if (sameEdits(merged, remote)) break;
+      const put = await gh(path, {
+        method: 'PUT',
+        body: JSON.stringify({
+          message: 'Update pronunciation edits',
+          content: toBase64(JSON.stringify({ app: 'lyric-scroll', version: 1, ...merged }, null, 1)),
+          ...(sha ? { sha } : {}),
+        }),
+      });
+      if (put.ok) break;
+      // another device saved in between: fetch its version, merge again and retry
+      if ((put.status === 409 || put.status === 422) && attempt < 4) continue;
+      throw new Error(put.status === 404 && !sha ? syncProblem(404) : syncProblem(put.status));
+    }
+    cloud.error = '';
+    cloud.last = Date.now();
+    store.set('syncLast', cloud.last);
+    if (announce) toast('Edits synced.');
+  } catch (err) {
+    console.error(err);
+    const offline = err instanceof TypeError;
+    const message = offline ? "Sync couldn't reach GitHub. It will try again when you're back online." : err.message;
+    if (message !== cloud.error && (!offline || announce)) toast(message);
+    cloud.error = message;
+  } finally {
+    cloud.busy = false;
+    updateSyncStatus();
+    if (cloud.again) { cloud.again = false; syncNow(); }
+  }
+}
+
+function updateSyncStatus(busy) {
+  const on = syncOn();
+  $('syncForm').hidden = on;
+  $('syncActions').hidden = !on;
+  $('syncStatus').classList.toggle('err', !!cloud.error);
+  $('syncStatus').textContent = !on
+    ? 'Off. Edits are saved on this device only.'
+    : busy || cloud.error || `On. Edits are saved to ${cloud.owner}/${SYNC_REPO} and shared with every device you connect.`
+      + (cloud.last ? ` Last synced ${new Date(cloud.last).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}.` : '');
+}
+
+$('syncForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const token = $('syncToken').value.trim();
+  if (!token) { $('syncToken').focus(); return; }
+  const previous = { token: cloud.token, owner: cloud.owner };
+  cloud.token = token;
+  updateSyncStatus('Connecting…');
+  try {
+    const me = await gh('/user');
+    if (me.status === 401) throw new Error('GitHub rejected that access key. Copy it again, or create a new one.');
+    // keys limited to one repository may not read the profile; the site's own address names the account too
+    const login = me.ok ? (await me.json()).login : location.hostname.endsWith('.github.io') ? location.hostname.split('.')[0] : '';
+    if (!login) throw new Error("Couldn't tell which GitHub account this key belongs to.");
+    const repo = await gh(`/repos/${login}/${SYNC_REPO}`);
+    if (repo.status === 404) throw new Error(`This key can't see a repository named ${SYNC_REPO} in ${login}'s account. Create it as a private repository and choose it when you make the key.`);
+    if (!repo.ok) throw new Error(syncProblem(repo.status));
+    cloud.owner = login;
+    cloud.error = '';
+    store.set('syncToken', token);
+    store.set('syncOwner', login);
+    $('syncToken').value = '';
+    await syncNow();
+    if (!cloud.error) toast('Sync is on. Connect your other devices with the same key.');
+  } catch (err) {
+    Object.assign(cloud, previous);
+    cloud.error = '';
+    toast(err instanceof TypeError ? "Couldn't reach GitHub. Check your connection and try again." : err.message);
+  }
+  updateSyncStatus();
+});
+$('syncNowBtn').addEventListener('click', () => syncNow({ announce: true }));
+$('syncOff').addEventListener('click', () => {
+  cloud.token = cloud.owner = cloud.error = '';
+  for (const k of ['syncToken', 'syncOwner', 'syncLast']) { try { localStorage.removeItem('lyricscroll.' + k); } catch {} }
+  updateSyncStatus();
+  toast('Sync turned off on this device. Your edits stay here and in your GitHub copy.');
+});
+// pick up edits made on other devices whenever the app comes back into view, and every minute or so while open
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') scheduleSync(300); });
+addEventListener('online', () => scheduleSync(300));
+setInterval(() => { if (document.visibilityState === 'visible') syncNow(); }, 90000);
+// Refile edits saved by the earlier version (by library song ID and line number) under the song title and line text
+function migrateLegacyFixes() {
+  const lk = legacyScope();
+  if (!fixes.spots[lk] && !fixes.words[lk]) return;
+  const lines = state.song.text.split(/\r?\n/);
+  changeFixes(() => {
+    const sk = songScope();
+    for (const [pos, r] of Object.entries(fixes.spots[lk] || {})) {
+      const [li, ci] = pos.split(':').map(Number);
+      if (lines[li] != null) (fixes.spots[sk] ??= {})[lineKey(lines[li], ci)] ??= r;
+    }
+    for (const [glyph, r] of Object.entries(fixes.words[lk] || {})) (fixes.words[sk] ??= {})[glyph] ??= r;
+    delete fixes.spots[lk];
+    delete fixes.words[lk];
+  });
+}
+addEventListener('storage', e => {
+  if (e.key !== 'lyricscroll.fixes') return;
+  reloadFixes();
+  if (state.song) renderLyrics({ keepPlace: true });
+});
 const countFixes = () => Object.values(fixes).reduce((n, level) => n + Object.values(level).reduce((m, o) => m + Object.keys(o).length, 0), 0);
 
 // "hang2" → "háng", "lv4" → "lǜ": tone numbers are easier to type than marks
@@ -1076,7 +1333,7 @@ function buildLines(lines, fn) {
         for (const c of cells) {
           if (c.space) { el.append(h('span', { class: 'sp' })); continue; }
           const idx = ci++;
-          const fix = c.p ? null : fixFor(li, idx, c.g);
+          const fix = c.p ? null : fixFor(text, li, idx, c.g);
           const reading = fix ? fix.r : c.r;
           el.append(h('span', { class: 'c' + (c.p ? ' p' : '') + (fix ? ' fixed' : '') + (reading ? '' : ' bare'), 'data-li': li, 'data-ci': idx, 'data-scope': fix?.scope },
             h('span', { class: 'g', text: c.g }),
@@ -1095,6 +1352,7 @@ async function renderLyrics({ keepPlace = false } = {}) {
   const seq = ++renderSeq;
   const song = state.song, lang = state.lang;
   if (!song) return;
+  migrateLegacyFixes();
   const anchor = keepPlace && readable.length ? clamp(currentK, 0, readable.length - 1) : null;
   const lines = song.text.split(/\r?\n/);
   lyricsEl.lang = LANGS[lang].tag;
@@ -1618,7 +1876,7 @@ function openSearch() {
   if (matchMedia('(pointer: fine)').matches) $('q').focus();
 }
 for (const id of ['brand', 'songBtn', 'searchBtn']) $(id).addEventListener('click', openSearch);
-$('settingsBtn').addEventListener('click', () => { updateFixCount(); $('settingsDlg').showModal(); });
+$('settingsBtn').addEventListener('click', () => { updateFixCount(); updateSyncStatus(); $('settingsDlg').showModal(); });
 for (const dlg of document.querySelectorAll('dialog')) {
   dlg.addEventListener('click', e => { if (e.target === dlg || e.target.closest('[data-close]')) dlg.close(); });
 }
@@ -1698,8 +1956,11 @@ $('editBtn').addEventListener('click', () => setEditing(!state.editing));
 $('editDone').addEventListener('click', () => setEditing(false));
 
 let fixCell = null;
-const fixTarget = cell => ({ li: cell.dataset.li, ci: cell.dataset.ci, glyph: cell.querySelector('.g').textContent });
-const SCOPE_NAMES = { spot: 'this spot', song: 'this song', all: 'all songs' };
+const fixTarget = cell => {
+  const li = +cell.dataset.li;
+  return { li, ci: +cell.dataset.ci, glyph: cell.querySelector('.g').textContent, text: state.song.text.split(/\r?\n/)[li] || '' };
+};
+const SCOPE_NAMES = { spot: 'this line', song: 'this song', all: 'all songs' };
 
 function openFix(cell) {
   fixCell = cell;
@@ -1711,7 +1972,7 @@ function openFix(cell) {
   $('fixGlyph').textContent = glyph;
   $('fixGlyph').lang = lang.tag;
   $('fixGlyph').style.fontFamily = getComputedStyle(lyricsEl).fontFamily;
-  $('fixLine').textContent = state.song.text.split(/\r?\n/)[+li] || '';
+  $('fixLine').textContent = state.song.text.split(/\r?\n/)[li] || '';
   $('fixInput').value = fixed ? r.textContent.trim() : auto;
   $('fixAuto').textContent = auto ? `Automatic: ${auto}` : 'There is no automatic pronunciation for this one.';
   $('fixTip').hidden = state.lang !== 'zh' || state.settings.tones === 'num';
@@ -1726,49 +1987,57 @@ function openFix(cell) {
   $('fixInput').select();
 }
 
-function afterFixChange(message) {
-  saveFixes();
+const SAVE_FAILED = "Couldn't save in this browser (private browsing or storage full), so this edit will be lost when the app closes.";
+function afterFixChange(ok, message) {
   $('fixDlg').close();
   renderLyrics({ keepPlace: true });
-  toast(message);
+  toast(ok ? message : SAVE_FAILED);
 }
 
 $('fixForm').addEventListener('submit', e => {
   e.preventDefault();
   if (!fixCell) return;
-  const { li, ci, glyph } = fixTarget(fixCell);
+  const { li, ci, glyph, text } = fixTarget(fixCell);
   let value = $('fixInput').value.trim();
   if (state.lang === 'zh' && state.settings.tones !== 'num') value = pinyinMarks(value);
   const scope = document.querySelector('input[name="fixScope"]:checked').value;
-  const sk = songScope();
-  // a wider edit should show here too, so drop this spot's own edit
-  delete fixes.spots[sk]?.[`${li}:${ci}`];
-  if (scope === 'spot') (fixes.spots[sk] ??= {})[`${li}:${ci}`] = value;
-  else if (scope === 'song') (fixes.words[sk] ??= {})[glyph] = value;
-  else (fixes.everywhere[state.lang] ??= {})[glyph] = value;
-  afterFixChange(scope === 'spot' ? `Saved: ${glyph} → ${value || '(blank)'}`
+  const ok = changeFixes(() => {
+    const sk = songScope(), lk = legacyScope();
+    // a wider edit should show here too, so drop the narrower edits that would hide it
+    delete fixes.spots[sk]?.[lineKey(text, ci)];
+    delete fixes.spots[lk]?.[`${li}:${ci}`];
+    if (scope !== 'spot') { delete fixes.words[sk]?.[glyph]; delete fixes.words[lk]?.[glyph]; }
+    if (scope === 'spot') (fixes.spots[sk] ??= {})[lineKey(text, ci)] = value;
+    else if (scope === 'song') (fixes.words[sk] ??= {})[glyph] = value;
+    else (fixes.everywhere[state.lang] ??= {})[glyph] = value;
+  });
+  afterFixChange(ok, scope === 'spot' ? `Saved: ${glyph} → ${value || '(blank)'}`
     : scope === 'song' ? `Saved for every “${glyph}” in this song.`
     : `Saved for every “${glyph}” in your ${LANGS[state.lang].name} songs.`);
 });
 
 $('fixReset').addEventListener('click', () => {
   if (!fixCell) return;
-  const { li, ci, glyph } = fixTarget(fixCell);
-  const sk = songScope();
+  const { li, ci, glyph, text } = fixTarget(fixCell);
   const scope = fixCell.dataset.scope;
-  if (scope === 'spot') delete fixes.spots[sk]?.[`${li}:${ci}`];
-  else if (scope === 'song') delete fixes.words[sk]?.[glyph];
-  else if (scope === 'all') delete fixes.everywhere[state.lang]?.[glyph];
-  afterFixChange('Edit removed.');
+  const ok = changeFixes(() => {
+    const sk = songScope(), lk = legacyScope();
+    if (scope === 'spot') { delete fixes.spots[sk]?.[lineKey(text, ci)]; delete fixes.spots[lk]?.[`${li}:${ci}`]; }
+    else if (scope === 'song') { delete fixes.words[sk]?.[glyph]; delete fixes.words[lk]?.[glyph]; }
+    else if (scope === 'all') delete fixes.everywhere[state.lang]?.[glyph];
+  });
+  afterFixChange(ok, 'Edit removed.');
 });
 
 function updateFixCount() {
+  reloadFixes();
   const n = countFixes();
   $('fixCount').textContent = n
     ? `${n} edit${n === 1 ? '' : 's'} saved in this browser. Copy a backup to move them to another device.`
     : 'No edits saved yet. Use the pencil button to change a pronunciation.';
 }
 $('fixCopy').addEventListener('click', () => {
+  reloadFixes();
   const backup = JSON.stringify({ app: 'lyric-scroll', fixes });
   navigator.clipboard.writeText(backup).then(
     () => toast('Backup copied. Paste it into “Restore from a backup” on your other device.'),
@@ -1779,26 +2048,26 @@ $('fixRestore').addEventListener('submit', e => {
   let data;
   try { data = JSON.parse($('fixRestoreText').value).fixes; } catch {}
   if (!data || typeof data !== 'object') { toast("That doesn't look like a Lyric Scroll backup."); return; }
-  for (const level of ['spots', 'words', 'everywhere']) {
-    for (const [k, v] of Object.entries(data[level] || {})) {
-      if (v && typeof v === 'object') fixes[level][k] = Object.assign(fixes[level][k] || {}, v);
+  const ok = changeFixes(() => {
+    for (const level of ['spots', 'words', 'everywhere']) {
+      for (const [k, v] of Object.entries(data[level] || {})) {
+        if (v && typeof v === 'object') fixes[level][k] = Object.assign(fixes[level][k] || {}, v);
+      }
     }
-  }
-  saveFixes();
+  });
   updateFixCount();
   $('fixRestoreText').value = '';
   renderLyrics({ keepPlace: true });
-  toast('Backup restored.');
+  toast(ok ? 'Backup restored.' : SAVE_FAILED);
 });
 $('fixClearSong').addEventListener('click', () => {
   if (!state.song) return;
-  const sk = songScope();
-  delete fixes.spots[sk];
-  delete fixes.words[sk];
-  saveFixes();
+  const ok = changeFixes(() => {
+    for (const sk of [songScope(), legacyScope()]) { delete fixes.spots[sk]; delete fixes.words[sk]; }
+  });
   updateFixCount();
   renderLyrics({ keepPlace: true });
-  toast('Edits for this song cleared. Edits saved for all songs are kept.');
+  toast(ok ? 'Edits for this song cleared. Edits saved for all songs are kept.' : SAVE_FAILED);
 });
 
 /* ---------- transport + keyboard ---------- */
@@ -1843,6 +2112,14 @@ setLang(state.lang, { rerender: false });
 const last = store.get('last');
 if (last && last.text) loadSong(last, { detect: false });
 else loadSong(sampleSong(state.lang), { detect: false });
+// the access-key link names this site's GitHub account and only the permission sync needs
+const siteOwner = location.hostname.endsWith('.github.io') ? location.hostname.split('.')[0] : '';
+$('syncKeyLink').href = 'https://github.com/settings/personal-access-tokens/new?' + new URLSearchParams({
+  name: 'Lyric Scroll sync', description: `Lets Lyric Scroll save pronunciation edits to ${SYNC_REPO}`,
+  ...(siteOwner ? { target_name: siteOwner } : {}), expires_in: '366', contents: 'write',
+});
+updateSyncStatus();
+syncNow();
 </script>
 </body>
 </html>
