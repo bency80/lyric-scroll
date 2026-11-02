@@ -755,17 +755,18 @@ kbd { font: 600 .78rem var(--f-ui); padding: 1px 6px; border: 1px solid var(--ru
       <form class="search-row" id="syncForm">
         <label class="sr" for="syncToken">GitHub access key</label>
         <input id="syncToken" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste your GitHub access key">
-        <button class="primary" type="submit">Connect</button>
+        <button class="primary" type="submit" id="syncConnect">Connect</button>
       </form>
       <div class="chips" id="syncActions" hidden>
         <button class="chip" type="button" id="syncNowBtn">Sync now</button>
+        <button class="chip" type="button" id="syncChangeKey">Change key</button>
         <button class="chip" type="button" id="syncOff">Turn off on this device</button>
       </div>
       <details class="paste">
         <summary>How to set up sync</summary>
         <ol class="foot steps">
           <li>On GitHub, create a <b>private</b> repository named <code>lyric-scroll-data</code>.</li>
-          <li>Create an access key with <a id="syncKeyLink" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">this pre-filled form</a>. Under <b>Repository access</b> choose <b>Only select repositories</b> and pick <code>lyric-scroll-data</code>, then click <b>Generate token</b> and copy it.</li>
+          <li>Create an access key with <a id="syncKeyLink" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">this pre-filled form</a>. Under <b>Repository access</b> choose <b>Only select repositories</b> and pick <code>lyric-scroll-data</code>. For <b>Expiration</b> keep one year or choose <b>No expiration</b>. Then click <b>Generate token</b> and copy it.</li>
           <li>Paste the key above and press <b>Connect</b>. Do the same once on each of your devices.</li>
         </ol>
       </details>
@@ -1154,6 +1155,8 @@ function syncProblem(status) {
   if (status === 404) return `Sync stopped: the access key can't see the private repository ${SYNC_REPO}.`;
   return `Sync hit a GitHub error (${status}). It will try again shortly.`;
 }
+// 401/403/404 mean the key itself needs replacing (expired, wrong permission or wrong repository)
+const syncFailure = status => Object.assign(new Error(syncProblem(status)), { keyProblem: [401, 403, 404].includes(status) });
 
 function scheduleSync(delay = 1500) {
   if (!syncOn()) return;
@@ -1175,7 +1178,7 @@ async function syncNow({ announce = false } = {}) {
         const file = await res.json();
         sha = file.sha;
         try { remote = Object.assign(remote, JSON.parse(fromBase64(file.content))); } catch {}
-      } else if (res.status !== 404 && res.status !== 409) throw new Error(syncProblem(res.status)); // 404/409: no file yet, or a brand-new empty repository
+      } else if (res.status !== 404 && res.status !== 409) throw syncFailure(res.status); // 404/409: no file yet, or a brand-new empty repository
       reloadFixes();
       reloadMeta();
       const local = { fixes, ...fixMeta };
@@ -1199,9 +1202,10 @@ async function syncNow({ announce = false } = {}) {
       if (put.ok) break;
       // another device saved in between: fetch its version, merge again and retry
       if ((put.status === 409 || put.status === 422) && attempt < 4) continue;
-      throw new Error(put.status === 404 && !sha ? syncProblem(404) : syncProblem(put.status));
+      throw syncFailure(put.status);
     }
     cloud.error = '';
+    cloud.needsKey = false;
     cloud.last = Date.now();
     store.set('syncLast', cloud.last);
     if (announce) toast('Edits synced.');
@@ -1211,6 +1215,8 @@ async function syncNow({ announce = false } = {}) {
     const message = offline ? "Sync couldn't reach GitHub. It will try again when you're back online." : err.message;
     if (message !== cloud.error && (!offline || announce)) toast(message);
     cloud.error = message;
+    // an expired or rejected key: open the box for a new one straight away
+    cloud.needsKey = !!err.keyProblem;
   } finally {
     cloud.busy = false;
     updateSyncStatus();
@@ -1220,7 +1226,11 @@ async function syncNow({ announce = false } = {}) {
 
 function updateSyncStatus(busy) {
   const on = syncOn();
-  $('syncForm').hidden = on;
+  // while sync is on, the key box opens for "Change key" or when GitHub rejects the current key
+  $('syncForm').hidden = on && !cloud.needsKey && !cloud.changingKey;
+  $('syncToken').placeholder = on ? 'Paste the new access key' : 'Paste your GitHub access key';
+  $('syncConnect').textContent = on ? 'Use this key' : 'Connect';
+  $('syncChangeKey').hidden = !!(cloud.needsKey || cloud.changingKey);
   $('syncActions').hidden = !on;
   $('syncStatus').classList.toggle('err', !!cloud.error);
   $('syncStatus').textContent = !on
@@ -1234,6 +1244,7 @@ $('syncForm').addEventListener('submit', async e => {
   const token = $('syncToken').value.trim();
   if (!token) { $('syncToken').focus(); return; }
   const previous = { token: cloud.token, owner: cloud.owner };
+  const replacing = syncOn();
   cloud.token = token;
   updateSyncStatus('Connecting…');
   try {
@@ -1247,21 +1258,28 @@ $('syncForm').addEventListener('submit', async e => {
     if (!repo.ok) throw new Error(syncProblem(repo.status));
     cloud.owner = login;
     cloud.error = '';
+    cloud.needsKey = cloud.changingKey = false;
     store.set('syncToken', token);
     store.set('syncOwner', login);
     $('syncToken').value = '';
     await syncNow();
-    if (!cloud.error) toast('Sync is on. Connect your other devices with the same key.');
+    if (!cloud.error) toast(replacing ? 'New key saved. Sync is on. Paste the same key on your other devices too.' : 'Sync is on. Connect your other devices with the same key.');
   } catch (err) {
+    // keep the old key (and its state) if the new one doesn't work
     Object.assign(cloud, previous);
-    cloud.error = '';
     toast(err instanceof TypeError ? "Couldn't reach GitHub. Check your connection and try again." : err.message);
   }
   updateSyncStatus();
 });
 $('syncNowBtn').addEventListener('click', () => syncNow({ announce: true }));
+$('syncChangeKey').addEventListener('click', () => {
+  cloud.changingKey = true;
+  updateSyncStatus();
+  $('syncToken').focus();
+});
 $('syncOff').addEventListener('click', () => {
   cloud.token = cloud.owner = cloud.error = '';
+  cloud.needsKey = cloud.changingKey = false;
   for (const k of ['syncToken', 'syncOwner', 'syncLast']) { try { localStorage.removeItem('lyricscroll.' + k); } catch {} }
   updateSyncStatus();
   toast('Sync turned off on this device. Your edits stay here and in your GitHub copy.');
@@ -1876,7 +1894,7 @@ function openSearch() {
   if (matchMedia('(pointer: fine)').matches) $('q').focus();
 }
 for (const id of ['brand', 'songBtn', 'searchBtn']) $(id).addEventListener('click', openSearch);
-$('settingsBtn').addEventListener('click', () => { updateFixCount(); updateSyncStatus(); $('settingsDlg').showModal(); });
+$('settingsBtn').addEventListener('click', () => { updateFixCount(); cloud.changingKey = false; updateSyncStatus(); $('settingsDlg').showModal(); });
 for (const dlg of document.querySelectorAll('dialog')) {
   dlg.addEventListener('click', e => { if (e.target === dlg || e.target.closest('[data-close]')) dlg.close(); });
 }
@@ -2116,7 +2134,7 @@ else loadSong(sampleSong(state.lang), { detect: false });
 const siteOwner = location.hostname.endsWith('.github.io') ? location.hostname.split('.')[0] : '';
 $('syncKeyLink').href = 'https://github.com/settings/personal-access-tokens/new?' + new URLSearchParams({
   name: 'Lyric Scroll sync', description: `Lets Lyric Scroll save pronunciation edits to ${SYNC_REPO}`,
-  ...(siteOwner ? { target_name: siteOwner } : {}), expires_in: '366', contents: 'write',
+  ...(siteOwner ? { target_name: siteOwner } : {}), expires_in: '365', contents: 'write',   // GitHub's limit is 365; anything longer falls back to 30 days
 });
 updateSyncStatus();
 syncNow();
