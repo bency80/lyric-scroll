@@ -670,7 +670,7 @@ kbd { font: 600 .78rem var(--f-ui); padding: 1px 6px; border: 1px solid var(--ru
       <h3 class="label">Samples (public domain)</h3>
       <div class="chips" id="samples"></div>
     </section>
-    <p class="foot">Lyrics come from QQ Music, Kugou and NetEase Cloud Music through the public <a href="https://github.com/metowolf/Meting" target="_blank" rel="noopener">Meting</a> API, and from <a href="https://lrclib.net" target="_blank" rel="noopener">LRCLIB</a>, a free community lyrics library.</p>
+    <p class="foot">Lyrics come from QQ Music, Kugou and NetEase Cloud Music through free community <a href="https://github.com/metowolf/Meting" target="_blank" rel="noopener">Meting</a> relays, and from <a href="https://lrclib.net" target="_blank" rel="noopener">LRCLIB</a>, a free community lyrics library.</p>
   </div>
 </dialog>
 
@@ -821,14 +821,21 @@ const LIB = {
   kuromojiDict: CDN + 'kuromoji@0.1.2/dict/',
 };
 const LRCLIB = 'https://lrclib.net/api/search?q=';
-// Meting (the API behind MetingJS) relays QQ Music, Kugou and NetEase search and lyrics with CORS enabled.
-const METING = 'https://api.i-meto.com/meting/api';
+// QQ Music, Kugou and NetEase block requests from other websites, so their search and lyrics come through public
+// Meting relays (the API behind MetingJS). These are free community services that come and go, so each library
+// lists the relays known to serve it, tried in order; whichever answered last time is tried first.
+const RELAYS = {
+  qijieya: 'https://api.qijieya.cn/meting/',
+  imeto:   'https://api.i-meto.com/meting/api',
+  liiiu:   'https://met.liiiu.cn/api',
+};
 const SOURCES = {
-  qq:      { name: 'QQ Music', server: 'tencent' },
-  kugou:   { name: 'Kugou',    server: 'kugou' },
-  netease: { name: 'NetEase',  server: 'netease' },
+  qq:      { name: 'QQ Music', server: 'tencent', relays: ['qijieya', 'imeto'] },
+  kugou:   { name: 'Kugou',    server: 'kugou',   relays: ['imeto'] },
+  netease: { name: 'NetEase',  server: 'netease', relays: ['qijieya', 'liiiu', 'imeto'] },
   lrclib:  { name: 'LRCLIB' },
 };
+const RELAY_TIMEOUT = 8000;
 const sourceOrder = lang => (lang === 'zh' || lang === 'yue' ? ['qq', 'kugou', 'netease', 'lrclib'] : ['lrclib', 'qq', 'netease', 'kugou']);
 const SEC_PER_LINE_AT_1X = 4;
 
@@ -1625,10 +1632,11 @@ function stripTranslation(text) {
 function songFromLrc(hit, lrc) {
   let entries = parseLrc(lrc);
   if (!entries.length && lrc.split('\n').length > 3) entries = lrc.split(/\r?\n/).map(l => ({ t: 0, text: l.replace(/\[[^\]]*\]/g, '').trim() }));
-  // QQ Music and Kugou open with a "Title - Artist" line
+  // the services add a "Title - Artist" line near the top (NetEase puts it after the credits)
   const norm = s => s.toLowerCase().replace(/[\s\-–—_·•]/g, '');
-  const i = entries.findIndex(e => e.text);
-  if (i >= 0 && / - /.test(entries[i].text) && norm(entries[i].text).includes(norm(hit.song.title.replace(/\s*[（(].*$/, '')))) entries.splice(i, 1);
+  const title = norm(hit.song.title.replace(/\s*[（(].*$/, ''));
+  const i = entries.slice(0, 15).findIndex(e => / - /.test(e.text) && norm(e.text).includes(title));
+  if (title && i >= 0) entries.splice(i, 1);
   if (hit.source === 'netease') entries = entries.map(e => ({ ...e, text: stripTranslation(e.text) }));
   return { ...hit.song, text: lrcText(entries), times: lrcTimes(entries) };
 }
@@ -1700,8 +1708,26 @@ $('srcOpts').addEventListener('change', e => {
   store.set('sources', [...enabledSources]);
 });
 
-// LRCLIB and the Meting relay both answer 503 when busy (sometimes without CORS headers, which surfaces as a network error), so retry a few times.
-async function fetchRetry(url, signal, tries = 3) {
+// fetch that gives up after `ms` (a dead server must not hold up the search) and stops at once when `signal` aborts it
+async function fetchWithin(url, ms, signal) {
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+  const ctl = new AbortController();
+  const stop = () => ctl.abort();
+  signal?.addEventListener('abort', stop, { once: true });
+  const timer = setTimeout(stop, ms);
+  try {
+    return await fetch(url, { signal: ctl.signal });
+  } catch (err) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    throw err.name === 'AbortError' ? new Error('timed out') : err;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', stop);
+  }
+}
+
+// LRCLIB and the relays answer 503 when busy (sometimes without CORS headers, which surfaces as a network error), so retry a few times.
+async function fetchRetry(url, signal, { tries = 3, timeout = 10000 } = {}) {
   let lastErr;
   for (let attempt = 1; attempt <= tries; attempt++) {
     if (attempt > 1) {
@@ -1709,7 +1735,7 @@ async function fetchRetry(url, signal, tries = 3) {
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     }
     try {
-      const res = await fetch(url, { signal });
+      const res = await fetchWithin(url, timeout, signal);
       if (res.ok) return res;
       lastErr = new Error('HTTP ' + res.status);
       if (res.status < 500) break;
@@ -1736,21 +1762,72 @@ async function searchLrclib(q, signal) {
   }).slice(0, 10);
 }
 
-async function searchMeting(source, q, signal) {
-  const url = `${METING}?server=${SOURCES[source].server}&type=search&id=${encodeURIComponent(q)}`;
-  const data = await (await fetchRetry(url, signal)).json();
+// Relays disagree on field names: {title, author} on some, {name, artist} on others
+function parseRelayResults(source, data) {
   const seen = new Set();
-  return (Array.isArray(data) ? data : []).filter(x => x && x.title && x.lrc).map(x => {
+  return (Array.isArray(data) ? data : []).map(x => ({
+    title: String(x?.title || x?.name || ''),
+    artist: [x?.author ?? x?.artist].flat().filter(Boolean).join(' / '),
+    lrcUrl: String(x?.lrc || '').replace(/^http:\/\//, 'https://'),
+  })).filter(x => x.title && x.lrcUrl).map(({ title, artist, lrcUrl }) => {
     let id = '';
-    try { id = new URL(x.lrc).searchParams.get('id') || ''; } catch {}
+    try { id = new URL(lrcUrl).searchParams.get('id') || ''; } catch {}
     return {
-      source, lrcUrl: x.lrc,
-      song: { key: `${source}:${id || x.title + '|' + x.author}`, source, title: x.title, artist: x.author || '', album: '', duration: 0, text: '', times: null },
+      source, id, lrcUrl,
+      song: { key: `${source}:${id || title + '|' + artist}`, source, title, artist, album: '', duration: 0, text: '', times: null },
     };
   }).filter(x => {
     const id = `${x.song.title}|${x.song.artist}`.toLowerCase();
     return !seen.has(id) && seen.add(id);
   }).slice(0, 10);
+}
+
+const relayPref = store.get('relays', {});   // library → the relay that last returned results
+const relayOrder = source => [...new Set([relayPref[source], ...SOURCES[source].relays])].filter(r => RELAYS[r] && SOURCES[source].relays.includes(r));
+function rememberRelay(source, relay) {
+  if (relayPref[source] === relay) return;
+  relayPref[source] = relay;
+  store.set('relays', relayPref);
+}
+
+async function searchMeting(source, q, signal) {
+  const { server } = SOURCES[source];
+  let lastErr = new Error('no relay answered'), answered = false;
+  for (const relay of relayOrder(source)) {
+    try {
+      const res = await fetchWithin(`${RELAYS[relay]}?server=${server}&type=search&id=${encodeURIComponent(q)}`, RELAY_TIMEOUT, signal);
+      if (!res.ok) throw new Error(`${relay}: HTTP ${res.status}`);
+      const items = parseRelayResults(source, await res.json());
+      answered = true;
+      if (!items.length) continue;   // a relay can answer with nothing when its link to the library is broken, so ask the next
+      rememberRelay(source, relay);
+      return items;
+    } catch (err) {
+      if (err.name === 'AbortError') throw err;
+      lastErr = err;
+    }
+  }
+  if (answered) return [];
+  throw lastErr;
+}
+
+// Lyrics come from the relay that found the song; if it has gone quiet, other relays for that library can serve them by ID
+async function fetchLyrics(hit) {
+  const { server } = SOURCES[hit.source];
+  const urls = [hit.lrcUrl, ...relayOrder(hit.source).map(r => `${RELAYS[r]}?server=${server}&type=lrc&id=${encodeURIComponent(hit.id)}`)];
+  let lastErr = new Error('no lyrics source answered');
+  for (const url of [...new Set(hit.id ? urls : [hit.lrcUrl])]) {
+    try {
+      const res = await fetchWithin(url, RELAY_TIMEOUT, null);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const text = await res.text();
+      if (/\[\d+:\d+/.test(text) || text.split('\n').length > 3) return text;
+      lastErr = Object.assign(new Error('no lyrics'), { empty: true });
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr;
 }
 
 async function runSearch(q) {
@@ -1762,13 +1839,13 @@ async function runSearch(q) {
     $('searchStatus').textContent = 'Turn on at least one library to search.';
     return;
   }
+  // pressing Search again (or Enter) mid-search cancels the running search and starts this one
   searchCtl?.abort();
   searchCtl = new AbortController();
   const { signal } = searchCtl;
   lastQuery = q;
   lastResults = Object.fromEntries(sources.map(s => [s, { state: 'loading', items: [] }]));
   showResults();
-  $('searchGo').disabled = true;
   await Promise.all(sources.map(async source => {
     try {
       const items = source === 'lrclib' ? await searchLrclib(q, signal) : await searchMeting(source, q, signal);
@@ -1781,7 +1858,6 @@ async function runSearch(q) {
     if (!signal.aborted) showResults();
   }));
   if (signal.aborted) return;
-  $('searchGo').disabled = false;
   if (Object.values(lastResults).every(r => !r.items.length)) $('pasteBox').open = true;
 }
 
@@ -1841,7 +1917,7 @@ async function openResult(hit, btn, note) {
   note.textContent = 'Loading lyrics…';
   btn.disabled = true;
   try {
-    const song = songFromLrc(hit, await (await fetchRetry(hit.lrcUrl)).text());
+    const song = songFromLrc(hit, await fetchLyrics(hit));
     if (!song.text) throw Object.assign(new Error('no lyrics'), { empty: true });
     $('searchDlg').close();
     loadSong(song, { prefer: searchLang });
