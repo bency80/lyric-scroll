@@ -532,9 +532,6 @@ kbd { font: 600 .78rem var(--f-ui); padding: 1px 6px; border: 1px solid var(--ru
   color: var(--reading);
 }
 #fixAuto, #fixTip { margin-top: 6px; }
-.scope-opts { display: grid; gap: 8px; }
-.scope-opts label { display: flex; align-items: center; gap: 10px; cursor: pointer; }
-.scope-opts input { width: 18px; height: 18px; margin: 0; accent-color: var(--seal); }
 .fix-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 #syncStatus.err { color: var(--seal); }
 .steps { margin: 10px 0 0; padding-left: 1.2em; display: grid; gap: 6px; }
@@ -791,14 +788,7 @@ kbd { font: 600 .78rem var(--f-ui); padding: 1px 6px; border: 1px solid var(--ru
       <p class="foot" id="fixAuto"></p>
       <p class="foot" id="fixTip">Tip: type tone numbers if that's easier. hang2 becomes háng, lv4 becomes lǜ.</p>
     </div>
-    <fieldset>
-      <legend class="label">Use it for</legend>
-      <div class="scope-opts">
-        <label><input type="radio" name="fixScope" value="spot" checked> <span>Only this line (and wherever it repeats)</span></label>
-        <label><input type="radio" name="fixScope" value="song"> <span id="scopeSong"></span></label>
-        <label><input type="radio" name="fixScope" value="all"> <span id="scopeAll"></span></label>
-      </div>
-    </fieldset>
+    <p class="foot" id="fixScopeNote"></p>
     <div class="fix-actions">
       <button class="primary" type="submit">Save</button>
       <button class="chip" type="button" id="fixReset">Use automatic</button>
@@ -2054,8 +2044,6 @@ const fixTarget = cell => {
   const li = +cell.dataset.li;
   return { li, ci: +cell.dataset.ci, glyph: cell.querySelector('.g').textContent, text: state.song.text.split(/\r?\n/)[li] || '' };
 };
-const SCOPE_NAMES = { spot: 'this line', song: 'this song', all: 'all songs' };
-
 function openFix(cell) {
   fixCell = cell;
   const { li, glyph } = fixTarget(cell);
@@ -2070,12 +2058,10 @@ function openFix(cell) {
   $('fixInput').value = fixed ? r.textContent.trim() : auto;
   $('fixAuto').textContent = auto ? `Automatic: ${auto}` : 'There is no automatic pronunciation for this one.';
   $('fixTip').hidden = state.lang !== 'zh' || state.settings.tones === 'num';
-  $('scopeSong').textContent = `Every “${glyph}” in this song`;
-  $('scopeAll').textContent = `Every “${glyph}” in all my ${lang.name} songs`;
-  const scope = cell.dataset.scope || 'spot';
-  document.querySelector(`input[name="fixScope"][value="${scope}"]`).checked = true;
+  $('fixScopeNote').textContent = `Saving changes every “${glyph}” in all your ${lang.name} songs.`;
   $('fixReset').hidden = !fixed;
-  $('fixReset').textContent = `Use automatic (remove the edit for ${SCOPE_NAMES[scope]})`;
+  // edits made before every edit applied everywhere may still belong to just this song
+  $('fixReset').textContent = cell.dataset.scope === 'all' ? `Use automatic in all ${lang.name} songs` : 'Use automatic in this song';
   $('fixDlg').showModal();
   $('fixInput').focus();
   $('fixInput').select();
@@ -2094,20 +2080,16 @@ $('fixForm').addEventListener('submit', e => {
   const { li, ci, glyph, text } = fixTarget(fixCell);
   let value = $('fixInput').value.trim();
   if (state.lang === 'zh' && state.settings.tones !== 'num') value = pinyinMarks(value);
-  const scope = document.querySelector('input[name="fixScope"]:checked').value;
+  // every edit applies to that text in all songs of the language
   const ok = changeFixes(() => {
     const sk = songScope(), lk = legacyScope();
-    // a wider edit should show here too, so drop the narrower edits that would hide it
+    // older song-only edits would hide the new one, so drop them: this spot's, and this text's in every song of the language
     delete fixes.spots[sk]?.[lineKey(text, ci)];
     delete fixes.spots[lk]?.[`${li}:${ci}`];
-    if (scope !== 'spot') { delete fixes.words[sk]?.[glyph]; delete fixes.words[lk]?.[glyph]; }
-    if (scope === 'spot') (fixes.spots[sk] ??= {})[lineKey(text, ci)] = value;
-    else if (scope === 'song') (fixes.words[sk] ??= {})[glyph] = value;
-    else (fixes.everywhere[state.lang] ??= {})[glyph] = value;
+    for (const [scope, words] of Object.entries(fixes.words)) if (scope.endsWith(`|${state.lang}`)) delete words[glyph];
+    (fixes.everywhere[state.lang] ??= {})[glyph] = value;
   });
-  afterFixChange(ok, scope === 'spot' ? `Saved: ${glyph} → ${value || '(blank)'}`
-    : scope === 'song' ? `Saved for every “${glyph}” in this song.`
-    : `Saved for every “${glyph}” in your ${LANGS[state.lang].name} songs.`);
+  afterFixChange(ok, `Saved: “${glyph}” → ${value || '(blank)'} in all your ${LANGS[state.lang].name} songs.`);
 });
 
 $('fixReset').addEventListener('click', () => {
